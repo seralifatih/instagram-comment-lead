@@ -7,13 +7,9 @@
     'where to buy': 0.75,
     'need this': 0.5,
     'interested': 0.5,
-    'fiyat': 0.6,
-    'ne kadar': 0.7,
-    'fiyat nedir': 0.7,
-    'nereden al': 0.65,
-    'siparis': 0.6,
-    'sipariş': 0.6,
-    'stok var': 0.5,
+    'order': 0.6,
+    'in stock': 0.5,
+    'available': 0.5,
     'link': 0.4
 };
 

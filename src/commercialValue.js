@@ -1,8 +1,7 @@
 ﻿const BUSINESS_KEYWORDS = [
     'shop', 'store', 'agency', 'studio', 'official', 'boutique', 'brand',
     'media', 'design', 'digital', 'co', 'company', 'market', 'trade',
-    'beauty', 'fashion', 'lux', 'retail', 'service', 'consult', 'ajans',
-    'stüdyo', 'studyo', 'resmi', 'magaza', 'mağaza'
+    'beauty', 'fashion', 'lux', 'retail', 'service', 'consult'
 ];
 
 const LINK_PATTERNS = [

@@ -7,8 +7,8 @@ test('detectIntent: weighted phrases (EN)', () => {
   assert.ok(score >= 0.6);
 });
 
-test('detectIntent: weighted phrases (TR)', () => {
-  const score = detectIntent('fiyat nedir, ne kadar');
+test('detectIntent: weighted phrases (EN variant)', () => {
+  const score = detectIntent('How much is the price?');
   assert.ok(score >= 0.6);
 });
 

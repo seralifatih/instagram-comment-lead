@@ -7,31 +7,31 @@ import { computeLeadScore } from './leadScore.js';
 import { assessCommentQuality } from './commentQuality.js';
 import { estimateCommercialValue } from './commercialValue.js';
 
-// --- SABİTLER ---
-const DEFAULT_MAX_POSTS = 3; // Profil linki verilirse son kaç post?
-const DEFAULT_MAX_COMMENTS = 100; // Post başına maksimum yorum
+// --- CONSTANTS ---
+const DEFAULT_MAX_POSTS = 3; // If a profile URL is provided, how many recent posts?
+const DEFAULT_MAX_COMMENTS = 100; // Max comments per post
 const DEVICE_PROFILE = devices['iPhone 14 Pro'];
 const INSTAGRAM_APP_ID = '936619743392459';
 
-// --- LEAD ANAHTAR KELİMELERİ (Satın alma niyeti) ---
+// --- LEAD KEYWORDS (Purchase intent) ---
 const LEAD_KEYWORDS = [
-    'fiyat', 'price', 'dm', 'bilgi', 'info', 'sipariş', 'order',
-    'beden', 'size', 'kargo', 'shipping', 'available', 'var mı',
-    'how much', 'ne kadar', 'satın', 'buy', 'link'
+    'price', 'dm', 'info', 'order',
+    'size', 'shipping', 'available',
+    'how much', 'buy', 'link'
 ];
 
 const INTENT_PATTERNS = {
     PURCHASE_INTENT: [
-        /\b(buy|order|purchase|satın|satin|sipariş|siparis|available|stock|stok|link|dm|pm|ship|shipping|kargo)\b/i
+        /\b(buy|order|purchase|available|stock|link|dm|pm|ship|shipping)\b/i
     ],
     PRICE_INQUIRY: [
-        /\b(price|fiyat|cost|how much|ne kadar|ücret|ucret)\b/i
+        /\b(price|cost|how much)\b/i
     ],
     QUESTION: [
-        /\b(how|nasıl|nasil|where|nerede|info|detay|details|why|neden)\b|\?/i
+        /\b(how|where|info|details|why)\b|\?/i
     ],
     SERVICE_REQUEST: [
-        /\b(appointment|booking|reserve|rezervasyon|randevu|service|hizmet)\b/i
+        /\b(appointment|booking|reserve|service)\b/i
     ],
     INFLUENCER_INTEREST: [
         /\b(collab|collaboration|influencer|sponsor|sponsorship|partner|review)\b/i
@@ -52,7 +52,7 @@ const TOKENIZER = new natural.WordTokenizer();
 
 const LOW_SIGNAL_PHRASES = new Set([
     'ok', 'okay', 'nice', 'cool', 'wow', 'woww', 'amazing', 'great', 'super', 'love',
-    'güzel', 'guzel', 'harika', 'mükemmel', 'mukemmel', 'süper', 'superb', '👍', '🔥', '😍'
+    'superb'
 ]);
 
 const SPAM_PATTERN = /\b(follow me|check my story|link in bio|dm me|subscribe)\b/i;
@@ -101,25 +101,25 @@ await Actor.init();
 LLM_CONFIG = getLlmConfig();
 LLM_BATCHER = createLlmBatcher(LLM_CONFIG);
 
-// --- GİRİŞ KONTROLÜ ---
+// --- INPUT VALIDATION ---
 const input = (await Actor.getInput()) ?? {};
 const config = validateInput(input);
 WEBHOOK_DISPATCHER = createWebhookDispatcher(config.webhookUrl, config.webhookConfig);
 
 if (config.targetUrls.length === 0) {
-    log.warning('İşlenecek post URL bulunamadı. Lütfen geçerli bir Instagram post veya reel linki girin.');
+    log.warning('No post URL provided. Please enter a valid Instagram post or reel URL.');
     await Actor.exit();
 }
 
-// Session ID Kontrolü (Yorumlar için kritik!)
+// Session ID check (required for comments)
 if (config.sessionId) {
-    log.info('🔐 Session ID tanımlandı. Yorumlar ve detaylı veri çekilebilir.');
+    log.info('Session ID provided. Comments and detailed data can be fetched.');
 } else {
-    log.error('❌ Session ID eksik veya geçersiz. Lütfen tarayıcınızdaki sessionid değerini veya tam cookie stringini girin.');
+    log.error('Session ID missing or invalid. Provide the sessionid value or the full cookie string.');
     await Actor.exit();
 }
 
-// --- QUEUE KURULUMU ---
+// --- QUEUE SETUP ---
 const requestQueue = await Actor.openRequestQueue();
 
 for (const url of config.targetUrls) {
@@ -133,10 +133,10 @@ for (const url of config.targetUrls) {
 
 const proxyConfiguration = await Actor.createProxyConfiguration(config.proxyConfiguration);
 if (config.enrichLeads && !proxyConfiguration) {
-    log.warning('Enrichment aktif ama proxy ayarı yok. Ban riskini azaltmak için Apify Proxy önerilir.');
+    log.warning('Enrichment is enabled but no proxy configuration is set. Apify Proxy is recommended to reduce ban risk.');
 }
 
-// --- CRAWLER YAPILANDIRMASI ---
+// --- CRAWLER CONFIGURATION ---
 const crawler = new PlaywrightCrawler({
     requestQueue,
     proxyConfiguration,
@@ -156,10 +156,10 @@ const crawler = new PlaywrightCrawler({
 
     preNavigationHooks: [
         async ({ page }) => {
-            // Gereksiz kaynakları engelle (hız için)
+            // Block heavy resources for speed
             await page.route('**/*.{png,jpg,jpeg,mp4,avi,woff,woff2}', (route) => route.abort());
 
-            // Session Cookie Ekle
+            // Add session cookie
             if (config.sessionId) {
                 await page.context().addCookies([{
                     name: 'sessionid',
@@ -172,7 +172,7 @@ const crawler = new PlaywrightCrawler({
                 }]);
             }
 
-            // Mobile Viewport
+            // Mobile viewport
             await page.setViewportSize(DEVICE_PROFILE.viewport);
             await page.setExtraHTTPHeaders({
                 'User-Agent': DEVICE_PROFILE.userAgent,
@@ -185,11 +185,11 @@ const crawler = new PlaywrightCrawler({
         const { type, originalUrl, isEnrichment, commentData } = request.userData;
         log.info(`Processing ${isEnrichment ? 'enrichment' : type}: ${request.url}`);
 
-        await randomDelay(800, 1600, page); // İnsan taklidi
+        await randomDelay(800, 1600, page); // Human-like delay
 
-        // Login Redirect Kontrolü
+        // Login redirect guard
         if (page.url().includes('accounts/login')) {
-            log.error(`❌ Login duvarına takıldı: ${request.url}. Lütfen geçerli bir Session ID girin.`);
+            log.error(`Login wall encountered: ${request.url}. Provide a valid Session ID.`);
             return;
         }
 
@@ -198,34 +198,34 @@ const crawler = new PlaywrightCrawler({
             return;
         }
 
-        // 1. SENARYO: PROFİL URL GELDİYSE -> SON POSTLARI BUL
+        // Scenario 1: Profile URL -> enqueue recent posts
         if (type === 'profile') {
             await handleProfile(page, requestQueue, config.maxPostsPerProfile);
             return;
         }
 
-        // 2. SENARYO: POST URL GELDİYSE -> YORUMLARI ÇEK
+        // Scenario 2: Post URL -> fetch comments
         if (type === 'post') {
             const shortcode = extractShortcode(request.url);
             if (!shortcode) {
-                log.error(`Shortcode bulunamadı: ${request.url}`);
+                log.error(`Shortcode not found: ${request.url}`);
                 return;
             }
 
-            // Media ID'ye çevir (API için gerekli)
+            // Convert to Media ID (required for API)
             const mediaId = await getMediaId(page, shortcode, INSTAGRAM_APP_ID);
 
             if (!mediaId) {
-                log.error(`Media ID alınamadı, sayfa yüklenmemiş olabilir: ${shortcode}`);
+                log.error(`Media ID could not be retrieved; page may not be loaded: ${shortcode}`);
                 return;
             }
 
-            log.info(`💬 Yorumlar çekiliyor... MediaID: ${mediaId}`);
+            log.info(`Fetching comments... MediaID: ${mediaId}`);
 
-            // Yorumları API ile Çek
+            // Fetch comments via API
             const comments = await fetchComments(page, mediaId, config.maxComments, INSTAGRAM_APP_ID, config.scrapeSince);
 
-            log.info(`✅ Toplam ${comments.length} yorum bulundu.`);
+            log.info(`Found ${comments.length} comments.`);
 
             await processComments(comments, COMMENT_PROCESS_CONCURRENCY, async (comment) => {
                 const dedupeKey = getCommentDedupKey(comment, shortcode);
@@ -331,10 +331,10 @@ await generateSummary();
 await Actor.exit();
 
 // ============================================================
-// YARDIMCI FONKSİYONLAR
+// HELPER FUNCTIONS
 // ============================================================
 
-// 1. Profil sayfasından son gönderileri bulur ve kuyruğa ekler
+// 1. Load recent posts from a profile and enqueue them
 async function handleProfile(page, queue, limit) {
     try {
         const links = new Set();
@@ -362,7 +362,7 @@ async function handleProfile(page, queue, limit) {
         }
 
         const selected = Array.from(links).slice(0, limit);
-        log.info(`?? Profilde bulunan g?nderiler: ${selected.length}`);
+        log.info(`Found ${selected.length} posts on profile.`);
 
         for (const link of selected) {
             await queue.addRequest({
@@ -373,12 +373,12 @@ async function handleProfile(page, queue, limit) {
             await randomDelay(300, 700);
         }
     } catch (e) {
-        log.error(`Profil i?lenirken hata: ${e.message}`);
+        log.error(`Error while processing profile: ${e.message}`);
     }
 }
 
 
-// Enrichment: Profil sayfasından takipçi sayısını alır ve yoruma ekler
+// Enrichment: Fetch follower count from profile and attach to the comment record
 async function handleEnrichment(page, commentData) {
     const followerCount = await extractFollowerCount(page);
     const followerBucket = bucketFollowerCount(followerCount);
@@ -394,7 +394,7 @@ async function handleEnrichment(page, commentData) {
     const isLead = isLeadQualified(intentScore, followerBucket);
 
     if (followerCount === null) {
-        log.warning(`Takipçi sayısı bulunamadı: ${page.url()}`);
+        log.warning(`Follower count not found: ${page.url()}`);
     }
 
     const audienceQualification = buildAudienceQualification(followerCount, followerBucket);
@@ -495,7 +495,7 @@ async function extractFollowerCount(page) {
 
 function parseFollowerCount(text) {
     if (!text || typeof text !== 'string') return null;
-    const match = text.match(/([0-9.,]+)\s*([km])?\s*(followers?|takipci)/i);
+    const match = text.match(/([0-9.,]+)\s*([km])?\s*(followers?)/i);
     if (!match) return null;
 
     const raw = match[1];
@@ -614,24 +614,24 @@ function getLlmConfig() {
     };
 }
 
-// 2. Sayfa içinden Media ID'yi bulur veya hesaplar
+// 2. Find or calculate Media ID from the page
 async function getMediaId(page, shortcode, appId) {
-    // Önce URL'den alphabet conversion deneyelim (JS tarafında)
-    // Eğer bu tutmazsa page context içinde API call deneriz.
-    // Instagram'da MediaID genellikle <meta property="al:ios:url"> içinde "instagram://media?id=..." olarak gizlidir.
+    // First attempt: parse via URL-based conversion (JS side)
+    // If that fails, try in-page context via API call.
+    // On Instagram, MediaID is often stored in <meta property="al:ios:url"> as "instagram://media?id=..."
 
     return await page.evaluate(async ({ code, id }) => {
-        // Yöntem A: Meta tag
+        // Method A: Meta tag
         const iosMeta = document.querySelector('meta[property="al:ios:url"]');
         if (iosMeta) {
             const match = iosMeta.content.match(/id=(\d+)/);
             if (match) return match[1];
         }
 
-        // Yöntem B: JS ile Shortcode -> MediaID (Basit versiyon)
-        // Bu karmaşık olduğu için direkt API'ye soralım:
+        // Method B: JS Shortcode -> MediaID (simple version)
+        // This is complex, so use the API directly:
         try {
-            // Küçük bir trick: oembed endpoint halka açıktır
+            // Small trick: oEmbed endpoint is publicly accessible
             const resp = await fetch(`https://www.instagram.com/api/v1/oembed/?url=https://www.instagram.com/p/${code}/`);
             const data = await resp.json();
             return data.media_id; // "3234..."
@@ -640,7 +640,7 @@ async function getMediaId(page, shortcode, appId) {
     }, { code: shortcode, id: appId });
 }
 
-// 3. Dahili API ile Yorumları Çek (Pagination dahil)
+// 3. Fetch comments via internal API (with pagination)
 async function fetchComments(page, mediaId, maxComments, appId, scrapeSince) {
     return await page.evaluate(async ({ mediaId, maxComments, appId, scrapeSince }) => {
         const collectedComments = [];
@@ -666,7 +666,7 @@ async function fetchComments(page, mediaId, maxComments, appId, scrapeSince) {
                 const comments = data.comments || [];
 
                 let stopDueToDelta = false;
-                // Yorumlar? i?le
+                // Process comments
                 for (const c of comments) {
                     if (sinceTs && typeof c.created_at === 'number' && c.created_at < sinceTs) {
                         stopDueToDelta = true;
@@ -691,10 +691,10 @@ async function fetchComments(page, mediaId, maxComments, appId, scrapeSince) {
                     break;
                 }
 
-                // Pagination kontrol?
+                // Pagination check
                 if (data.next_min_id && collectedComments.length < maxComments) {
                     nextMinId = data.next_min_id;
-                    // H?zl? istek at?p banlanmamak i?in k?sa bir delay (browser context i?inde)
+                    // Short delay to avoid rapid requests and bans (browser context)
                     await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
                 } else {
                     hasMore = false;
@@ -710,7 +710,7 @@ async function fetchComments(page, mediaId, maxComments, appId, scrapeSince) {
 }
 
 
-// 4. Lead Kelime Analizi
+// 4. Lead Keyword Analysis
 function hasIntentSignal(text) {
     if (!text) return false;
     for (const patterns of Object.values(INTENT_PATTERNS)) {
@@ -762,10 +762,10 @@ function isLowSignalComment(text) {
 
     if (!cleaned) return true;
     if (LOW_SIGNAL_PHRASES.has(cleaned)) return true;
-    if (/^(.){3,}$/.test(cleaned)) return true;
+    if (/^(.)\1{3,}$/.test(cleaned)) return true;
     if (/^[\d\W_]+$/.test(cleaned)) return true;
 
-    const alphaCount = cleaned.replace(/[^a-zA-Z????????????]/g, '').length;
+    const alphaCount = cleaned.replace(/[^a-zA-Z]/g, '').length;
     if (alphaCount === 0 && !/\d/.test(cleaned)) return true;
     const tokens = TOKENIZER.tokenize(cleaned);
     if (cleaned.length <= 4 && alphaCount <= 2 && tokens.length <= 1) return true;
@@ -897,7 +897,7 @@ async function analyzeComment(text) {
 }
 
 function detectLanguage(text) {
-    if (/[??????]/i.test(text)) return 'tr';
+    if (/[^\x00-\x7F]/.test(text)) return 'unknown';
     return 'en';
 }
 
@@ -1101,7 +1101,7 @@ function validateInput(input) {
     const supportedUrls = urls.filter(isSupportedUrl);
     const rejectedUrls = urls.filter(u => !isSupportedUrl(u));
     if (rejectedUrls.length > 0) {
-        log.warning(`Sadece Instagram post, reel veya profil linkleri destekleniyor. ${rejectedUrls.length} URL atlandı. Örnek: ${rejectedUrls[0]}`);
+        log.warning(`Only Instagram post, reel, or profile URLs are supported. Skipped ${rejectedUrls.length} URL(s). Example: ${rejectedUrls[0]}`);
     }
 
     return {
@@ -1255,6 +1255,20 @@ function normalizeWebhookUrl(value) {
     const trimmed = value.trim();
     if (!trimmed) return null;
     return trimmed;
+}
+
+function meetsMinLeadScore(leadScore, minLeadScore) {
+    const normalize = (value) => String(value || '').toUpperCase();
+    const lead = normalize(leadScore);
+    const min = normalize(minLeadScore || 'LOW');
+
+    const rank = (value) => {
+        if (value === 'HIGH') return 3;
+        if (value === 'MEDIUM') return 2;
+        return 1;
+    };
+
+    return rank(lead) >= rank(min);
 }
 
 function shouldNotifyWebhook(record) {
