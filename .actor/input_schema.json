@@ -268,24 +268,6 @@
             "editor": "checkbox",
             "example": true
         },
-        "instagramApiKey": {
-            "title": "Instagram API Credentials",
-            "type": "string",
-            "description": "Your Instagram Graph API token or Apify Instagram Scraper API key. Required for fetching comment data.",
-            "editor": "textfield",
-            "isSecret": true,
-            "example": "your_api_key_here",
-            "sectionCaption": "API Credentials & Configuration",
-            "sectionDescription": "Required API keys and authentication tokens"
-        },
-        "openaiApiKey": {
-            "title": "OpenAI API Key",
-            "type": "string",
-            "description": "Your OpenAI API key for AI-powered lead analysis. Get one at https://platform.openai.com/api-keys. Required for lead scoring and intent detection. Must start with 'sk-'.",
-            "editor": "textfield",
-            "isSecret": true,
-            "example": "sk-proj-..."
-        },
         "openaiModel": {
             "title": "OpenAI Model",
             "type": "string",
@@ -302,7 +284,9 @@
                 "GPT-3.5 Turbo (Faster, Lower Cost)"
             ],
             "default": "gpt-4-turbo-preview",
-            "example": "gpt-4-turbo-preview"
+            "example": "gpt-4-turbo-preview",
+            "sectionCaption": "AI Model Configuration",
+            "sectionDescription": "Configure the AI model for lead analysis"
         },
         "maxConcurrency": {
             "title": "Max Concurrent Requests",
@@ -364,9 +348,7 @@
         }
     },
     "required": [
-        "postUrls",
-        "instagramApiKey",
-        "openaiApiKey"
+        "postUrls"
     ],
     "additionalProperties": false
 }
