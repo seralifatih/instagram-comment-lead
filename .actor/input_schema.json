@@ -7,7 +7,7 @@
             "title": "Instagram Post URLs",
             "type": "array",
             "description": "List of Instagram post URLs to analyze. Enter full URLs like: https://www.instagram.com/p/ABC123xyz/",
-            "editor": "requestListSources",
+            "editor": "stringList",
             "example": [
                 "https://www.instagram.com/p/C3xYz1234Ab/",
                 "https://www.instagram.com/p/C3xYz5678Cd/"
@@ -128,7 +128,7 @@
             "title": "Filter by Intent Types",
             "type": "array",
             "description": "Only include leads with specific detected intents. Leave empty to include all intent types. Useful for targeted lead generation campaigns.",
-            "editor": "select",
+            "editor": "stringList",
             "items": {
                 "type": "string",
                 "enum": [
