@@ -2,8 +2,8 @@
     "actorSpecification": 1,
     "name": "instagram-comment-lead-intelligence",
     "title": "Instagram Comment Lead Intelligence API",
-    "description": "AI-powered lead generation from Instagram comments. Automatically identifies high-intent prospects, scores lead quality, detects purchase intent, filters spam, and extracts contact information. Perfect for B2B SaaS, e-commerce, agencies, and content creators.",
-    "version": "1.0.0",
+    "description": "Minimal production-ready lead generation from Instagram comments using AI-powered intent detection and quality scoring. Extract qualified leads with configurable filtering.",
+    "version": "2.0.0",
     "meta": {
         "templateId": "instagram-lead-gen"
     },

@@ -1,0 +1,8 @@
+{
+  "postUrls": [
+    "https://www.instagram.com/p/C3xYz1234Ab/"
+  ],
+  "maxCommentsPerPost": 500,
+  "targetLeads": 30,
+  "minLeadScore": 0.5
+}

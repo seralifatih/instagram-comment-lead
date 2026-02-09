@@ -2,11 +2,10 @@
   "compilerOptions": {
     /* Language and Environment */
     "target": "ES2022",
-    "lib": [
-      "ES2022"
-    ],
-    "module": "commonjs",
+    "lib": ["ES2022"],
+    "module": "ES2022",
     "moduleResolution": "node",
+    
     /* Strict Type-Checking Options */
     "strict": true,
     "noImplicitAny": true,
@@ -16,6 +15,7 @@
     "strictPropertyInitialization": true,
     "noImplicitThis": true,
     "alwaysStrict": true,
+    
     /* Additional Checks */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -24,28 +24,29 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
+    
     /* Module Resolution */
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
+    
     /* Emit */
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
     "removeComments": true,
-    "importHelpers": true,
+    "importHelpers": false,
     "downlevelIteration": true,
+    
     /* Interop Constraints */
     "isolatedModules": true,
-    "allowJs": true,
-    "checkJs": true,
+    "allowJs": false,
+    "checkJs": false,
+    
     /* Completeness */
-    "skipLibCheck": true,
-    /* Advanced */
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "skipLibCheck": true
   },
   "include": [
     "src/**/*",

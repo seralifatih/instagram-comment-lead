@@ -1,12 +1,16 @@
 {
     "name": "instagram-comment-lead-intelligence",
     "version": "2.0.0",
-    "description": "Advanced Instagram comment scraper with Lead Scoring, Intent Analysis, and Audience Qualification.",
+    "description": "AI-powered lead generation from Instagram comments with intent detection and quality scoring.",
     "type": "module",
-    "main": "src/main.js",
+    "main": "dist/index.js",
     "scripts": {
-        "start": "node src/main.js",
-        "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+        "start": "node dist/index.js",
+        "build": "tsc",
+        "dev": "npm run build && node dist/index.js",
+        "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+        "lint": "eslint src --ext .ts",
+        "format": "prettier --write \"src/**/*.ts\""
     },
     "dependencies": {
         "apify": "^3.1.0",
@@ -17,14 +21,20 @@
     "devDependencies": {
         "@types/jest": "^29.5.12",
         "@types/node": "^20.14.10",
+        "@types/natural": "^5.1.5",
+        "@typescript-eslint/eslint-plugin": "^6.0.0",
+        "@typescript-eslint/parser": "^6.0.0",
         "ajv": "^8.17.1",
+        "eslint": "^8.50.0",
         "jest": "^29.7.0",
+        "prettier": "^3.0.0",
         "ts-jest": "^29.2.5",
+        "ts-node": "^10.9.1",
         "typescript": "^5.4.5"
     },
     "engines": {
         "node": ">=18.0.0"
     },
     "author": "Apify Developer",
-    "license": "UNLICENSED"
+    "license": "MIT"
 }
