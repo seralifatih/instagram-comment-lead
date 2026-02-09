@@ -40,7 +40,6 @@
             "type": "string",
             "description": "Only scrape comments posted AFTER this date. Format: YYYY-MM-DD or ISO. Leave empty for all.",
             "editor": "textfield",
-            "format": "date",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}(.*)?$"
         },
         "enrichLeads": {
