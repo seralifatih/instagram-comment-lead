@@ -20,7 +20,7 @@
     },
     "devDependencies": {
         "@types/jest": "^29.5.12",
-        "@types/node": "^20.14.10",
+        "@types/node": "^18.19.0",
         "@typescript-eslint/eslint-plugin": "^6.0.0",
         "@typescript-eslint/parser": "^6.0.0",
         "eslint": "^8.50.0",
@@ -31,7 +31,7 @@
         "typescript": "^5.4.5"
     },
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=18.20.0 <19"
     },
     "author": "Apify Developer",
     "license": "MIT"

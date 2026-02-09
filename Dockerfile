@@ -6,7 +6,7 @@ COPY package.json package-lock.json* ./
 
 # Install ALL dependencies (devDeps needed for TypeScript compilation)
 RUN npm --quiet set progress=false \
-    && npm install --include=dev \
+    && npm ci --include=dev \
     && echo "Node.js $(node --version) | NPM $(npm --version)"
 
 # Copy source code + configs

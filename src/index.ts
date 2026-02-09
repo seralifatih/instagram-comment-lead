@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Actor } from 'apify';
-import { HttpCrawler, log } from 'crawlee';
+import { HttpCrawler, type HttpCrawlingContext, log } from 'crawlee';
 import type { NormalizedInput } from './types/Input.js';
 import { INPUT_DEFAULTS, INPUT_CONSTRAINTS } from './types/Input.js';
 
@@ -90,37 +90,28 @@ emit('INFO', 'Boot', {
 // ── main ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  await Actor.init();
+  // 1. Load raw input
+  const raw: unknown = await Actor.getInput();
 
-  try {
-    // 1. Load raw input
-    const raw: unknown = await Actor.getInput();
+  // 2. Validate required fields, apply defaults, fail fast on mismatch
+  const input = validateInput(raw);
 
-    // 2. Validate required fields, apply defaults, fail fast on mismatch
-    const input = validateInput(raw);
+  // 3. Structured log of validated input — every field a first-class key
+  log.info('Input validated', {
+    buildVersion: BUILD_VERSION,
+    postUrls: input.postUrls,
+    postUrlCount: input.postUrls.length,
+    maxCommentsPerPost: input.maxCommentsPerPost,
+    targetLeads: input.targetLeads,
+    minLeadScore: input.minLeadScore,
+  });
 
-    // 3. Structured log of validated input — every field a first-class key
-    log.info('Input validated', {
-      buildVersion: BUILD_VERSION,
-      postUrls: input.postUrls,
-      postUrlCount: input.postUrls.length,
-      maxCommentsPerPost: input.maxCommentsPerPost,
-      targetLeads: input.targetLeads,
-      minLeadScore: input.minLeadScore,
-    });
+  // 4. Business logic
+  await processLeads(input);
 
-    // 4. Business logic
-    await processLeads(input);
-
-    log.info('Actor finished', { buildVersion: BUILD_VERSION });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error('Actor failed', { error: msg, buildVersion: BUILD_VERSION });
-    throw err;
-  } finally {
-    await Actor.exit();
-  }
+  log.info('Actor finished', { buildVersion: BUILD_VERSION });
 }
+
 
 // ── input validation (fail-fast, no external libs) ───────────────────────
 
@@ -275,32 +266,27 @@ async function processLeads(input: NormalizedInput): Promise<void> {
   let status: 'success' | 'failed' = 'success';
   let failureReason: string | undefined;
 
-  let crawler: HttpCrawler | null = null;
+  let crawler: HttpCrawler<HttpCrawlingContext> | null = null;
   const queuedUrls: string[] = [];
   const perPostMeta: Array<Record<string, unknown>> = [];
 
   try {
-    for (const url of input.postUrls) {
-      const apiUrl = toInstagramApiUrl(url);
-      await requestQueue.addRequest({ url: apiUrl, label: 'POST_API', userData: { sourceUrl: url } });
-      queuedUrls.push(apiUrl);
-      log.info('Queued URL', { url: apiUrl, sourceUrl: url });
-    }
-
-    if (queuedUrls.length === 0) {
-      throw new Error('NO_URLS_QUEUED: Input postUrls resolved to an empty queue.');
-    }
-
-    crawler = new HttpCrawler({
+    crawler = new HttpCrawler<HttpCrawlingContext>({
       requestQueue,
       maxConcurrency: 4,
       requestHandlerTimeoutSecs: 60,
       requestHandler: async ({ request, body, contentType }) => {
         if (targetReached) return;
 
-        const rawBody = typeof body === 'string' ? body : body.toString();
-        const { post, comments } = extractInstagramData(rawBody, contentType);
+        const rawBody = typeof body === 'string' ? body : body?.toString() ?? '';
+        const { post, comments } = extractInstagramData(rawBody, contentType?.type);
         const sourceUrl = (request.userData?.sourceUrl as string | undefined) ?? request.url;
+
+        log.info('Handling request', {
+          url: request.url,
+          sourceUrl,
+          uniqueKey: request.uniqueKey,
+        });
 
         const limitedComments = comments.slice(0, input.maxCommentsPerPost);
         totalComments += limitedComments.length;
@@ -345,10 +331,28 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           }
         }
       },
+      failedRequestHandler: async ({ request }) => {
+        log.warning('Request failed', { url: request.url, uniqueKey: request.uniqueKey });
+      },
     });
 
     if (!crawler) {
       throw new Error('CRAWLER_NOT_INITIALIZED: Expected a HttpCrawler instance.');
+    }
+
+    const requests = input.postUrls.map((url) => {
+      const apiUrl = toInstagramApiUrl(url);
+      return { url: apiUrl, label: 'POST_API', userData: { sourceUrl: url } };
+    });
+
+    if (requests.length === 0) {
+      throw new Error('NO_URLS_QUEUED: Input postUrls resolved to an empty queue.');
+    }
+
+    await crawler.addRequests(requests);
+    for (const entry of requests) {
+      queuedUrls.push(entry.url);
+      log.info('Queued URL', { url: entry.url, sourceUrl: entry.userData?.sourceUrl });
     }
 
     await crawler.run();
@@ -378,6 +382,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
   }
 }
 
+
 function scoreLead(text: string): number {
   const normalized = text.toLowerCase();
   const keywords = [
@@ -404,7 +409,7 @@ function scoreLead(text: string): number {
 }
 
 function toInstagramApiUrl(url: string): string {
-  const trimmed = url.split('?')[0];
+  const trimmed = url.split('?')[0] ?? url;
   if (trimmed.endsWith('/')) {
     return `${trimmed}?__a=1&__d=dis`;
   }
@@ -507,7 +512,15 @@ function parseInstagramJson(
 
 // ── bootstrap ────────────────────────────────────────────────────────────
 
-main().catch((err: unknown) => {
+Actor.main(async () => {
+  try {
+    await main();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('Actor failed', { error: msg, buildVersion: BUILD_VERSION });
+    throw err;
+  }
+}).catch((err: unknown) => {
   console.error('Unhandled:', err instanceof Error ? err.message : err);
   process.exit(1);
 });
