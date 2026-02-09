@@ -128,7 +128,7 @@
             "title": "Filter by Intent Types",
             "type": "array",
             "description": "Only include leads with specific detected intents. Leave empty to include all intent types. Useful for targeted lead generation campaigns.",
-            "editor": "stringList",
+            "editor": "select",
             "items": {
                 "type": "string",
                 "enum": [
@@ -137,6 +137,13 @@
                     "contact_request",
                     "feedback",
                     "general_engagement"
+                ],
+                "enumTitles": [
+                    "Purchase Intent",
+                    "Information Seeking",
+                    "Contact Request",
+                    "Feedback",
+                    "General Engagement"
                 ]
             },
             "uniqueItems": true,
