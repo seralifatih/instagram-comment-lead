@@ -56,7 +56,9 @@
             },
             "intent_score": {
                 "type": "number",
-                "description": "Intent score (0-1)."
+                "description": "Intent score (0-1).",
+                "minimum": 0,
+                "maximum": 1
             },
             "keywords": {
                 "type": "array",
@@ -94,7 +96,8 @@
                         "enum": [
                             "low",
                             "qualified",
-                            "high_value"
+                            "high_value",
+                            null
                         ],
                         "description": "Audience tier."
                     }
@@ -116,6 +119,12 @@
                     "RANDOM"
                 ],
                 "description": "Lead type classification."
+            },
+            "commercial_score": {
+                "type": "number",
+                "description": "Commercial value score (0-1).",
+                "minimum": 0,
+                "maximum": 1
             }
         },
         "additionalProperties": true
@@ -134,6 +143,7 @@
                     "is_lead",
                     "keywords",
                     "leadScore",
+                    "commercial_score",
                     "lead_type",
                     "audience_qualification",
                     "profileUrl",
@@ -204,6 +214,10 @@
                     "lead_type": {
                         "label": "Lead Type",
                         "format": "text"
+                    },
+                    "commercial_score": {
+                        "label": "Commercial Score",
+                        "format": "number"
                     }
                 }
             }

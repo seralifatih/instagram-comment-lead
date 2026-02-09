@@ -9,6 +9,8 @@ AI-powered Instagram comment intelligence. This actor scrapes comments from Inst
 - Intent classification with heuristic rules and optional LLM fallback.
 - Lead scoring (`LOW` / `MEDIUM` / `HIGH`).
 - Optional audience enrichment with follower bucket and tier.
+- Lead type classification and commercial value scoring.
+- Webhook notifications for high-intent leads.
 - Output filtering via `minLeadScore`.
 
 ## Input
@@ -24,7 +26,8 @@ Example:
   "maxPostsPerProfile": 3,
   "scrapeSince": "2025-01-01",
   "enrichLeads": true,
-  "minLeadScore": "MEDIUM"
+  "minLeadScore": "MEDIUM",
+  "webhookUrl": "https://example.com/webhook"
 }
 ```
 
@@ -37,6 +40,8 @@ Input fields:
 - `enrichLeads` (default false): Enrich lead comments with follower data.
 - `maxPostsPerProfile` (default 3): Posts per profile when a profile URL is provided.
 - `minLeadScore` (default LOW): Filter output by `LOW`, `MEDIUM`, or `HIGH`.
+- `webhookUrl` (optional): Send payloads when `leadScore` is `HIGH` and `intent_score > 0.7`.
+- `webhookConfig` (optional): Advanced webhook retry/backoff settings.
 - `proxyConfiguration`: Apify proxy settings.
 
 ## Output Schema
@@ -53,6 +58,7 @@ Each dataset item has the following shape:
   "keywords": ["price", "ship"],
   "leadScore": "HIGH",
   "lead_type": "BUY_INTENT",
+  "commercial_score": 0.62,
   "audience_qualification": {
     "followers": 4200,
     "bucket": "1k-10k",
@@ -67,6 +73,9 @@ Each dataset item has the following shape:
 
 Lead rule:
 - `is_lead = true` when `intent_score > 0.5` AND follower bucket is at least `1k-10k`.
+
+Webhook rule:
+- Notifications fire only when `leadScore` is `HIGH` and `intent_score > 0.7`.
 
 ## Deployment (Apify)
 1. Push this repository to Git.

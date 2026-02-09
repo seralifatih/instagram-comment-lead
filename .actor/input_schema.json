@@ -66,6 +66,57 @@
                 "HIGH"
             ]
         },
+        "webhookUrl": {
+            "title": "Webhook URL",
+            "type": "string",
+            "description": "Optional webhook URL to receive high-intent leads (leadScore HIGH and intent_score > 0.7).",
+            "editor": "textfield"
+        },
+        "webhookConfig": {
+            "title": "Webhook Retry Settings (Optional)",
+            "type": "object",
+            "description": "Advanced retry/backoff settings for webhook delivery. Leave empty to use defaults.",
+            "editor": "json",
+            "default": {
+                "maxRetries": 4,
+                "baseDelayMs": 500,
+                "maxDelayMs": 8000,
+                "timeoutMs": 8000,
+                "concurrency": 3
+            },
+            "properties": {
+                "maxRetries": {
+                    "title": "Max Retries",
+                    "type": "integer",
+                    "description": "Number of retry attempts for failed webhook calls.",
+                    "minimum": 0
+                },
+                "baseDelayMs": {
+                    "title": "Base Delay (ms)",
+                    "type": "integer",
+                    "description": "Base delay used for exponential backoff in milliseconds.",
+                    "minimum": 0
+                },
+                "maxDelayMs": {
+                    "title": "Max Delay (ms)",
+                    "type": "integer",
+                    "description": "Maximum backoff delay in milliseconds.",
+                    "minimum": 0
+                },
+                "timeoutMs": {
+                    "title": "Request Timeout (ms)",
+                    "type": "integer",
+                    "description": "Timeout for webhook HTTP requests in milliseconds.",
+                    "minimum": 0
+                },
+                "concurrency": {
+                    "title": "Webhook Concurrency",
+                    "type": "integer",
+                    "description": "Maximum number of concurrent webhook deliveries.",
+                    "minimum": 1
+                }
+            }
+        },
         "proxyConfiguration": {
             "title": "Proxy Configuration",
             "type": "object",

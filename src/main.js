@@ -3,6 +3,9 @@ import { PlaywrightCrawler, Dataset, log, KeyValueStore } from 'crawlee';
 import { devices } from 'playwright';
 import natural from 'natural';
 import crypto from 'crypto';
+import { computeLeadScore } from './leadScore.js';
+import { assessCommentQuality } from './commentQuality.js';
+import { estimateCommercialValue } from './commercialValue.js';
 
 // --- SABİTLER ---
 const DEFAULT_MAX_POSTS = 3; // Profil linki verilirse son kaç post?
@@ -73,8 +76,16 @@ const LLM_STATE = {
 };
 
 const COMMENT_PROCESS_CONCURRENCY = 5;
+const WEBHOOK_DEFAULTS = {
+    maxRetries: 4,
+    baseDelayMs: 500,
+    maxDelayMs: 8000,
+    timeoutMs: 8000,
+    concurrency: 3
+};
 
 let LLM_BATCHER = null;
+let WEBHOOK_DISPATCHER = null;
 
 const GLOBAL_STATS = {
     totalComments: 0,
@@ -93,6 +104,7 @@ LLM_BATCHER = createLlmBatcher(LLM_CONFIG);
 // --- GİRİŞ KONTROLÜ ---
 const input = (await Actor.getInput()) ?? {};
 const config = validateInput(input);
+WEBHOOK_DISPATCHER = createWebhookDispatcher(config.webhookUrl, config.webhookConfig);
 
 if (config.targetUrls.length === 0) {
     log.warning('İşlenecek post URL bulunamadı. Lütfen geçerli bir Instagram post veya reel linki girin.');
@@ -227,6 +239,14 @@ const crawler = new PlaywrightCrawler({
                     GLOBAL_STATS.filteredComments += 1;
                     return;
                 }
+                const quality = assessCommentQuality(comment.text, {
+                    username: comment.user.username,
+                    postShortcode: shortcode
+                });
+                if (quality.is_low_quality) {
+                    GLOBAL_STATS.filteredComments += 1;
+                    return;
+                }
 
                 const analysis = await analyzeComment(comment.text);
                 if (!analysis) {
@@ -237,12 +257,20 @@ const crawler = new PlaywrightCrawler({
                 const username = comment.user.username;
                 const cached = getEnrichmentCache(username);
                 const followerBucket = cached?.follower_bucket ?? cached?.followerBucket ?? null;
-                const leadScoring = computeLeadScore(analysis.intent_score ?? 0, followerBucket, comment.text);
+                const followerCount = cached?.follower_count ?? cached?.followers ?? cached?.followerCount ?? null;
+                const engagementRatio = cached?.engagement_proxy ?? null;
+                const leadScoring = computeLeadScore(analysis.intent_score ?? 0, followerCount, comment.text);
                 const isLead = isLeadQualified(analysis.intent_score ?? 0, followerBucket);
                 updateGlobalStats(analysis, isLead ? 'HIGH' : 'LOW');
 
                 const profileUrl = `https://www.instagram.com/${username}/`;
                 const leadType = classifyLeadType(comment.text, analysis);
+                const commercialScore = estimateCommercialValue({
+                    username,
+                    bio: cached?.bio ?? '',
+                    followerCount,
+                    engagementRatio
+                });
                 const record = {
                     postUrl: originalUrl,
                     source_shortcode: shortcode,
@@ -254,6 +282,7 @@ const crawler = new PlaywrightCrawler({
                     keywords: analysis.keywords,
                     leadScore: leadScoring.category,
                     lead_type: leadType,
+                    commercial_score: commercialScore,
                     audience_qualification: cached?.audience_qualification ?? null,
                     profileUrl,
                     likeCount: comment.comment_like_count,
@@ -275,7 +304,7 @@ const crawler = new PlaywrightCrawler({
                 }
 
                 if (cached) {
-                    const scoring = computeLeadScore(analysis.intent_score ?? 0, followerBucket, comment.text);
+                    const scoring = computeLeadScore(analysis.intent_score ?? 0, followerCount, comment.text);
                     record.leadScore = scoring.category;
                     record.is_lead = isLeadQualified(analysis.intent_score ?? 0, followerBucket);
                     record.audience_qualification = cached.audience_qualification ?? null;
@@ -283,6 +312,9 @@ const crawler = new PlaywrightCrawler({
                 if (!meetsMinLeadScore(record.leadScore, config.minLeadScore)) {
                     GLOBAL_STATS.filteredComments += 1;
                     return;
+                }
+                if (shouldNotifyWebhook(record)) {
+                    void WEBHOOK_DISPATCHER?.enqueue(record);
                 }
                 await Dataset.pushData(record);
             });
@@ -356,7 +388,9 @@ async function handleEnrichment(page, commentData) {
             ? commentData.intentScore / 100
             : 0;
     const engagementProxy = getEngagementProxy(commentData?.likeCount, followerCount);
-    const leadScoring = computeLeadScore(intentScore, followerBucket, commentData?.text || '');
+    const profileSignals = await extractProfileSignals(page);
+    const bioText = buildProfileBio(profileSignals);
+    const leadScoring = computeLeadScore(intentScore, followerCount, commentData?.text || '');
     const isLead = isLeadQualified(intentScore, followerBucket);
 
     if (followerCount === null) {
@@ -364,11 +398,19 @@ async function handleEnrichment(page, commentData) {
     }
 
     const audienceQualification = buildAudienceQualification(followerCount, followerBucket);
+    const commercialScore = estimateCommercialValue({
+        username: commentData?.username,
+        bio: bioText,
+        followerCount,
+        engagementRatio: engagementProxy
+    });
     const cachePayload = {
         follower_bucket: followerBucket ?? null,
         audience_qualification: audienceQualification,
         engagement_proxy: engagementProxy,
-        follower_count: followerCount ?? null
+        follower_count: followerCount ?? null,
+        commercial_score: commercialScore,
+        bio: bioText
     };
 
     if (commentData?.username) {
@@ -380,6 +422,7 @@ async function handleEnrichment(page, commentData) {
         is_lead: isLead,
         leadScore: leadScoring.category,
         audience_qualification: audienceQualification,
+        commercial_score: commercialScore,
         extractedAt: commentData?.extractedAt || new Date().toISOString()
     };
 
@@ -387,8 +430,47 @@ async function handleEnrichment(page, commentData) {
         GLOBAL_STATS.filteredComments += 1;
         return;
     }
+    if (shouldNotifyWebhook(outputRecord)) {
+        void WEBHOOK_DISPATCHER?.enqueue(outputRecord);
+    }
 
     await Dataset.pushData(outputRecord);
+}
+
+async function extractProfileSignals(page) {
+    return await page.evaluate(() => {
+        const metaDescription = document.querySelector('meta[name="description"]')?.content || '';
+        const ogDescription = document.querySelector('meta[property="og:description"]')?.content || '';
+        let ldDescription = '';
+        const ldJson = document.querySelector('script[type="application/ld+json"]')?.textContent;
+        if (ldJson) {
+            try {
+                const parsed = JSON.parse(ldJson);
+                if (parsed && typeof parsed.description === 'string') {
+                    ldDescription = parsed.description;
+                }
+            } catch {
+                ldDescription = '';
+            }
+        }
+        const headerText = document.querySelector('header')?.innerText || '';
+        const externalUrl = document.querySelector('header a[href^="http"]')?.getAttribute('href') || '';
+        return {
+            metaDescription,
+            ogDescription,
+            ldDescription,
+            headerText,
+            externalUrl
+        };
+    });
+}
+
+function buildProfileBio(signals) {
+    if (!signals) return '';
+    const parts = [signals.headerText, signals.ldDescription, signals.metaDescription, signals.ogDescription, signals.externalUrl]
+        .filter(Boolean)
+        .map((value) => String(value));
+    return parts.join(' ').trim();
 }
 
 async function extractFollowerCount(page) {
@@ -758,103 +840,6 @@ function mergeIntentResults(heuristic, llmResult) {
     return heuristic;
 }
 
-function getFollowerBucketWeight(bucket) {
-    switch (bucket) {
-        case '<1k':
-            return 0.1;
-        case '1k-10k':
-            return 0.3;
-        case '10k-100k':
-            return 0.6;
-        case '100k+':
-            return 1.0;
-        case 'Nano (<1k)':
-            return 0.1;
-        case 'Micro (1k-10k)':
-            return 0.3;
-        case 'Mid-Tier (10k-100k)':
-            return 0.6;
-        case 'Macro (>100k)':
-            return 1.0;
-        default:
-            return 0.1;
-    }
-}
-
-function getAudienceTier(bucket) {
-    switch (bucket) {
-        case '<1k':
-            return 'low';
-        case '1k-10k':
-            return 'qualified';
-        case '10k-100k':
-        case '100k+':
-            return 'high_value';
-        default:
-            return 'low';
-    }
-}
-
-function buildAudienceQualification(followerCount, followerBucket) {
-    if (!followerBucket && typeof followerCount !== 'number') return null;
-    const bucket = followerBucket || bucketFollowerCount(followerCount);
-    return {
-        followers: Number.isFinite(followerCount) ? followerCount : null,
-        bucket,
-        tier: getAudienceTier(bucket)
-    };
-}
-
-function getEngagementProxy(commentLikeCount, followerCount) {
-    const likes = Number(commentLikeCount);
-    const followers = Number(followerCount);
-    if (!Number.isFinite(likes) || !Number.isFinite(followers) || followers <= 0) return null;
-    const ratio = likes / followers;
-    return Math.round(ratio * 100000) / 100000;
-}
-
-function getCommentLengthWeight(text) {
-    if (!text) return 0.1;
-    const length = text.trim().length;
-    if (length < 20) return 0.1;
-    if (length <= 100) return 0.5;
-    return 1.0;
-}
-
-function categorizeLeadScore(score) {
-    if (score >= 0.7) return 'HIGH';
-    if (score >= 0.4) return 'MEDIUM';
-    return 'LOW';
-}
-
-function meetsMinLeadScore(category, minCategory) {
-    const order = { LOW: 0, MEDIUM: 1, HIGH: 2 };
-    const categoryRank = order[String(category || 'LOW').toUpperCase()] ?? 0;
-    const minRank = order[String(minCategory || 'LOW').toUpperCase()] ?? 0;
-    return categoryRank >= minRank;
-}
-
-function isLeadQualified(intentScore, followerBucket) {
-    const intent = Number(intentScore) || 0;
-    if (intent <= 0.5) return false;
-    if (!followerBucket) return false;
-    return followerBucket === '1k-10k' || followerBucket === '10k-100k' || followerBucket === '100k+';
-}
-
-function computeLeadScore(intentScore, followerBucket, commentText) {
-    const normalizedIntent = Math.max(0, Math.min(1, Number(intentScore) || 0));
-    const followerWeight = getFollowerBucketWeight(followerBucket);
-    const lengthWeight = getCommentLengthWeight(commentText);
-
-    const score = (normalizedIntent * 0.6) + (followerWeight * 0.2) + (lengthWeight * 0.2);
-    const rounded = Math.round(score * 1000) / 1000;
-
-    return {
-        score: rounded,
-        category: categorizeLeadScore(rounded)
-    };
-}
-
 function classifyLeadType(commentText, analysis) {
     const text = String(commentText || '').toLowerCase();
     if (SPAM_PATTERN.test(text)) return 'SPAM';
@@ -1111,6 +1096,11 @@ function validateInput(input) {
         scrapeSince: parseScrapeSince(input.scrapeSince),
         enrichLeads: Boolean(input.enrichLeads),
         minLeadScore: normalizeMinLeadScore(input.minLeadScore),
+        webhookUrl: normalizeWebhookUrl(input.webhookUrl || input.webhook),
+        webhookConfig: {
+            ...WEBHOOK_DEFAULTS,
+            ...(input.webhookConfig || {})
+        },
         maxComments: input.maxComments || DEFAULT_MAX_COMMENTS,
         maxPostsPerProfile: input.maxPostsPerProfile || DEFAULT_MAX_POSTS,
         proxyConfiguration: input.proxyConfiguration || {},
@@ -1243,6 +1233,89 @@ function normalizeMinLeadScore(value) {
     const normalized = String(value || 'LOW').toUpperCase();
     if (normalized === 'HIGH' || normalized === 'MEDIUM' || normalized === 'LOW') return normalized;
     return 'LOW';
+}
+
+function normalizeWebhookUrl(value) {
+    if (!value) return null;
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return trimmed;
+}
+
+function shouldNotifyWebhook(record) {
+    if (!record) return false;
+    const leadScore = String(record.leadScore || '').toUpperCase();
+    const intentScore = Number(record.intent_score || 0);
+    return leadScore === 'HIGH' && intentScore > 0.7;
+}
+
+function createWebhookDispatcher(webhookUrl, config) {
+    if (!webhookUrl) return null;
+    const queue = [];
+    let active = 0;
+
+    const enqueue = (payload) => {
+        return new Promise((resolve) => {
+            queue.push({ payload, resolve });
+            void drain();
+        });
+    };
+
+    const drain = async () => {
+        while (active < config.concurrency && queue.length > 0) {
+            const item = queue.shift();
+            active += 1;
+            void sendWithRetry(webhookUrl, item.payload, config)
+                .catch(() => null)
+                .finally(() => {
+                    active -= 1;
+                    item.resolve();
+                    void drain();
+                });
+        }
+    };
+
+    return { enqueue };
+}
+
+async function sendWithRetry(url, payload, config) {
+    const maxRetries = Number(config.maxRetries) || 0;
+    const baseDelayMs = Number(config.baseDelayMs) || 500;
+    const maxDelayMs = Number(config.maxDelayMs) || 8000;
+    const timeoutMs = Number(config.timeoutMs) || 8000;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        try {
+            await postWebhook(url, payload, timeoutMs);
+            return;
+        } catch (e) {
+            if (attempt >= maxRetries) throw e;
+            const delay = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+            const jitter = Math.floor(Math.random() * 200);
+            await new Promise(r => setTimeout(r, delay + jitter));
+        }
+    }
+}
+
+async function postWebhook(url, payload, timeoutMs) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            throw new Error(`Webhook failed: ${response.status}`);
+        }
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 function getEnrichmentCache(username) {
