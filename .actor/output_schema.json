@@ -8,6 +8,11 @@
             "type": "string",
             "title": "Results",
             "template": "{{links.apiDefaultDatasetUrl}}/items"
+        },
+        "analytics": {
+            "type": "string",
+            "title": "Analytics",
+            "template": "{{links.apiDefaultKeyValueStoreUrl}}/records/OUTPUT_ANALYTICS"
         }
     }
 }
