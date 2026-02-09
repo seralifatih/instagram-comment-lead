@@ -67,7 +67,7 @@
                             "comment",
                             "contactInfo"
                         ],
-                        "unwind": "",
+                        "unwind": [],
                         "flatten": [],
                         "limit": 100,
                         "desc": true,
@@ -115,33 +115,6 @@
         "type": "url",
         "value": "https://apify.com/your-org/instagram-comment-lead-intelligence/icon.png"
     },
-    "screenshots": [
-        {
-            "title": "High-Quality Leads Dashboard",
-            "url": "https://apify.com/your-org/instagram-comment-lead-intelligence/screenshot1.png",
-            "description": "View qualified leads with AI-calculated scores and intent detection"
-        },
-        {
-            "title": "Lead Scoring Breakdown",
-            "url": "https://apify.com/your-org/instagram-comment-lead-intelligence/screenshot2.png",
-            "description": "Detailed lead analysis showing purchase intent, urgency signals, and contact information"
-        },
-        {
-            "title": "Sampling & Filtering Options",
-            "url": "https://apify.com/your-org/instagram-comment-lead-intelligence/screenshot3.png",
-            "description": "Configure smart sampling strategies and spam filtering thresholds"
-        },
-        {
-            "title": "Analytics & Insights",
-            "url": "https://apify.com/your-org/instagram-comment-lead-intelligence/screenshot4.png",
-            "description": "Aggregate insights on intent distribution, urgency patterns, and common questions"
-        }
-    ],
-    "socialMediaLinks": {
-        "twitter": "https://twitter.com/yourcompany",
-        "linkedin": "https://linkedin.com/company/yourcompany",
-        "youtube": "https://youtube.com/@yourcompany"
-    },
     "isPublic": true,
     "seoTitle": "Instagram Lead Generation API - AI-Powered Comment Analysis",
     "seoDescription": "Transform Instagram comments into qualified sales leads with AI. Automated lead scoring, intent detection, spam filtering, and contact extraction. Perfect for B2B, SaaS, and e-commerce.",
@@ -151,12 +124,5 @@
         "computeUnits": {
             "per1000Comments": 10
         }
-    },
-    "stats": {
-        "totalRuns": 0,
-        "totalUsers": 0,
-        "totalMetamorphs": 0,
-        "avgRunDurationMillis": 45000,
-        "avgComputeUnits": 0.5
     }
 }
