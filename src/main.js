@@ -524,6 +524,20 @@ function bucketFollowerCount(count) {
     return '100k+';
 }
 
+function isLeadQualified(intentScore, followerBucket) {
+    const score = Number(intentScore) || 0;
+    if (score <= 0.5) return false;
+
+    if (typeof followerBucket === 'number') {
+        return followerBucket >= 1000;
+    }
+
+    if (!followerBucket) return false;
+
+    const normalized = String(followerBucket).trim().toLowerCase();
+    return normalized === '1k-10k' || normalized === '10k-100k' || normalized === '100k+';
+}
+
 async function randomDelay(minMs, maxMs, page) {
     const min = Number.isFinite(minMs) ? minMs : 0;
     const max = Number.isFinite(maxMs) ? maxMs : min;
