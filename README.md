@@ -1,47 +1,32 @@
-# Instagram Comment Lead Intelligence API
+# Instagram Comment Lead Intelligence
 
-> **Minimal, production-ready lead generation from Instagram comments using AI**
+Extract qualified leads from Instagram post comments using AI-powered intent detection and lead scoring.
 
-[![Apify](https://img.shields.io/badge/Apify-Actor-00d4aa)](https://apify.com)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+This Apify Actor analyses comments on Instagram posts and reels, classifies commenter intent (purchase interest, questions, complaints, spam), scores lead quality, and outputs structured lead records to an Apify Dataset.
 
----
+## Input
 
-## 🎯 Overview
+The Actor accepts a JSON object with one required field and three optional fields.
 
-A lightweight, type-safe Apify Actor for extracting qualified leads from Instagram post comments. Uses AI-powered intent detection, lead scoring, and configurable quality thresholds.
+### Required
 
-### Key Features
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `postUrls` | `string[]` | 1–50 items, each matching `instagram.com/p/` or `/reel/` | Instagram post or reel URLs to analyse |
 
-- ✅ **Minimal Input Schema** - Only 4 parameters (1 required, 3 optional)
-- ✅ **TypeScript Strict Mode** - Full type safety and compile-time validation
-- ✅ **Production Logging** - Structured JSON logs with request IDs
-- ✅ **Fail-Fast Validation** - Early input validation with clear error messages
-- ✅ **Default Values** - Sensible defaults for all optional parameters
-- ✅ **Cost Optimization** - Early stopping when target leads reached
-
----
-
-## 📋 Input Schema
-
-### Required Fields
-
-| Field | Type | Description | Example |
-|-------|------|-------------|---------|
-| `postUrls` | `string[]` | Instagram post or reel URLs | `["https://www.instagram.com/p/ABC123/"]` |
-
-### Optional Fields with Defaults
+### Optional
 
 | Field | Type | Default | Range | Description |
 |-------|------|---------|-------|-------------|
-| `maxCommentsPerPost` | `number` | `1000` | 10-10000 | Max comments to fetch per post |
-| `targetLeads` | `number` | `50` | 1-1000 | Stop processing when this many leads found |
-| `minLeadScore` | `number` | `0.4` | 0.0-1.0 | Minimum quality score to include lead |
+| `maxCommentsPerPost` | `integer` | `1000` | 10–10,000 | Maximum comments to fetch per post |
+| `targetLeads` | `integer` | `50` | 1–1,000 | Stop early once this many qualified leads are found |
+| `minLeadScore` | `number` | `0.4` | 0.0–1.0 | Minimum quality score a lead must reach to appear in results |
 
----
+When an optional field is omitted, the default is applied automatically. Extra fields are rejected (`additionalProperties: false`).
 
-## 📥 Example Input
+### Example input
+
+Full configuration:
 
 ```json
 {
@@ -51,20 +36,67 @@ A lightweight, type-safe Apify Actor for extracting qualified leads from Instagr
   ],
   "maxCommentsPerPost": 500,
   "targetLeads": 30,
-  "minLeadScore": 0.5
+  "minLeadScore": 0.6
 }
 ```
 
-**Minimal valid input:**
+Minimal valid input (defaults to 1,000 comments, 50 leads, 0.4 score):
+
 ```json
 {
-  "postUrls": ["https://www.instagram.com/p/ABC123/"]
+  "postUrls": ["https://www.instagram.com/p/C3xYz1234Ab/"]
 }
 ```
 
----
+### URL format
 
-## 📤 Example Output
+Accepted patterns:
+
+```
+https://www.instagram.com/p/ABC123/
+https://www.instagram.com/reel/ABC123/
+https://instagram.com/p/ABC123/
+https://instagram.com/reel/ABC123/
+```
+
+Profile URLs, story URLs, and other platforms are rejected.
+
+## Output
+
+Each qualified lead is pushed to the default Apify Dataset as a JSON object.
+
+### Lead record fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `postUrl` | `string` | Source post URL |
+| `source_shortcode` | `string` | Instagram shortcode of the post |
+| `username` | `string` | Commenter's Instagram handle |
+| `text` | `string` | Full comment text |
+| `intent` | `string` | One of `BUY_INTENT`, `QUESTION`, `COMPLAINT`, `PROMOTER_SPAM`, `RANDOM` |
+| `intent_score` | `number` | Intent confidence, 0.0–1.0 |
+| `detected_language` | `string` | ISO language code (`en`, `es`, `tr`, etc.) |
+| `is_lead` | `boolean` | Whether this comment qualifies as a lead |
+| `keywords` | `string[]` | Intent keywords detected in the comment |
+| `leadScore` | `string` | Quality tier: `HIGH`, `MEDIUM`, or `LOW` |
+| `lead_type` | `string` | One of `BUY_INTENT`, `QUESTION`, `PROMOTER_SPAM`, `RANDOM` |
+| `commercial_score` | `number` | Commercial value estimate, 0.0–1.0 |
+| `audience_qualification` | `object \| null` | `{ followers, bucket, tier }` — see below |
+| `user_comment_count` | `integer` | How many comments this user left across all analysed posts |
+| `profileUrl` | `string` | `https://www.instagram.com/<username>/` |
+| `likeCount` | `integer` | Likes on the comment |
+| `postedAt` | `string` | ISO 8601 timestamp when the comment was posted |
+| `extractedAt` | `string` | ISO 8601 timestamp when the record was extracted |
+
+### Audience qualification object
+
+| Field | Type | Values |
+|-------|------|--------|
+| `followers` | `integer \| null` | Follower count, or `null` if unavailable |
+| `bucket` | `string \| null` | `<1k`, `1k-10k`, `10k-100k`, `100k+` |
+| `tier` | `string` | `HIGH_VALUE_AUDIENCE`, `MID_VALUE_AUDIENCE`, `LOW_VALUE_AUDIENCE` |
+
+### Example output record
 
 ```json
 {
@@ -88,265 +120,71 @@ A lightweight, type-safe Apify Actor for extracting qualified leads from Instagr
   "user_comment_count": 1,
   "profileUrl": "https://www.instagram.com/john_entrepreneur/",
   "likeCount": 12,
-  "postedAt": "2024-02-09T14:23:11Z",
-  "extractedAt": "2024-02-09T15:30:45Z"
+  "postedAt": "2024-02-09T14:23:11.000Z",
+  "extractedAt": "2024-02-09T15:30:45.000Z"
 }
 ```
 
----
+## Validation and error handling
 
-## 🚀 Quick Start
+The Actor validates input before doing any work. Every violation throws immediately with a prefixed error code. No silent fallbacks.
 
-### Run on Apify Platform
+| Code | Cause | Example message |
+|------|-------|-----------------|
+| `INPUT_MISSING` | No input provided | `No input provided. Supply at least { "postUrls": ["…"] }.` |
+| `INPUT_INVALID` | Input is not a JSON object | `Input must be a JSON object, received array.` |
+| `INPUT_MISSING_FIELD` | `postUrls` absent or not an array | `"postUrls" is required and must be a string array.` |
+| `INPUT_EMPTY` | `postUrls` is an empty array | `"postUrls" must contain at least 1 URL.` |
+| `INPUT_OVERFLOW` | Too many URLs | `"postUrls" has 60 items (max 50).` |
+| `INPUT_TYPE` | Wrong type for a field | `"maxCommentsPerPost" must be a finite number, received "fast".` |
+| `INPUT_RANGE` | Value outside allowed range | `"minLeadScore" must be between 0 and 1, received 2.5.` |
+| `INPUT_PATTERN` | URL doesn't match Instagram pattern | `postUrls[0] ("https://x.com/…") is not a valid Instagram URL.` |
 
-1. Navigate to [Apify Console](https://console.apify.com)
-2. Create new Actor run
-3. Configure input parameters
-4. Click **Start** and download results
-
-### Run Locally
+## Running locally
 
 ```bash
-# Install dependencies
 npm install
-
-# Build TypeScript
-npm run build
-
-# Run Actor
-npm start
-
-# Development mode (auto-rebuild)
-npm run dev
+npm run build   # compiles TypeScript to dist/
+npm start       # runs dist/index.js (prestart hook auto-rebuilds)
 ```
 
----
-
-## 🏗️ Project Structure
-
-```
-.
-├── .actor/
-│   ├── actor.json           # Actor metadata
-│   └── input_schema.json    # Minimal JSON schema
-├── src/
-│   ├── index.ts             # Main entry point
-│   ├── inputValidator.ts    # Input validation logic
-│   └── types/
-│       ├── Input.ts         # Input schema types
-│       └── Output.ts        # Output schema types
-├── dist/                    # Compiled JavaScript
-├── package.json
-├── tsconfig.json
-└── README.md
-```
-
----
-
-## 🔧 Development
-
-### Build System
+To iterate during development:
 
 ```bash
-# Clean build directory
-npm run clean
-
-# Compile TypeScript
-npm run build
-
-# Run tests
-npm test
-
-# Lint code
-npm run lint
-
-# Format code
-npm run format
+npm run dev     # build + run in one step
 ```
 
-### TypeScript Configuration
+## Project structure
 
-- **Strict Mode**: ✅ Enabled
-- **Target**: ES2022
-- **Module**: CommonJS (for Apify compatibility)
-- **Source Maps**: ✅ Generated
-- **Output**: `dist/` directory
-
----
-
-## 📊 Input Validation
-
-### URL Validation
-
-✅ Valid formats:
 ```
-https://www.instagram.com/p/ABC123/
-https://instagram.com/reel/XYZ789/
-https://www.instagram.com/p/ABC123
+.actor/
+  actor.json            Actor metadata and dataset views
+  input_schema.json     Apify UI schema (4 fields)
+src/
+  index.ts              Entry point: init, validate, process, exit
+  types/
+    Input.ts            InputSchema interface, defaults, constraints
+    Output.ts           LeadOutput and AnalyticsSummary interfaces
+dist/                   Compiled JavaScript (generated by tsc)
+Dockerfile              Build image: install, compile, prune, run
+package.json
+tsconfig.json
 ```
 
-❌ Invalid formats:
-```
-instagram.com/p/ABC123/          (missing protocol)
-https://www.instagram.com/user/  (profile URL, not post)
-https://twitter.com/status/123   (wrong platform)
-```
+## Build configuration
 
-### Error Handling
+| Setting | Value |
+|---------|-------|
+| TypeScript strict mode | Enabled (all flags) |
+| Target | ES2022 |
+| Module | ES2022 |
+| Root directory | `src/` |
+| Output directory | `dist/` |
+| Source maps | Generated |
+| Node.js | >= 18 |
 
-The Actor **fails fast** on validation errors:
+The `prestart` hook runs `tsc` automatically before every `npm start`. A `postbuild` hook verifies `dist/index.js` exists after compilation.
 
-```typescript
-// Missing required field
-throw new Error('Input field "postUrls" is required');
+## License
 
-// Invalid URL format
-throw new Error('No valid Instagram post or reel URLs provided');
-
-// Out of range value
-log.warning('maxCommentsPerPost exceeds maximum. Using 10000.');
-```
-
----
-
-## 🔍 How It Works
-
-1. **Input Loading**: Actor loads input via `Actor.getInput()`
-2. **Validation**: Strict validation with pattern matching and range checks
-3. **Normalization**: Apply defaults for optional fields
-4. **Logging**: Log configuration in structured JSON format
-5. **Processing**: Fetch comments and apply lead scoring
-6. **Early Stop**: Stop when `targetLeads` reached
-7. **Output**: Push results to Apify Dataset
-
----
-
-## 🎯 Default Behavior
-
-When you provide only `postUrls`:
-
-```json
-{
-  "postUrls": ["https://www.instagram.com/p/ABC123/"]
-}
-```
-
-The Actor automatically uses:
-- `maxCommentsPerPost`: 1000
-- `targetLeads`: 50
-- `minLeadScore`: 0.4 (includes medium & high quality leads)
-
----
-
-## 📈 Cost Optimization
-
-### Early Stopping
-
-Processing stops automatically when `targetLeads` is reached:
-
-```typescript
-if (leadsFound >= input.targetLeads) {
-  log.info('Target leads reached. Stopping early.');
-  break;
-}
-```
-
-### Comment Limits
-
-Control costs by adjusting `maxCommentsPerPost`:
-
-| Comments | Processing Time | Estimated Cost |
-|----------|----------------|----------------|
-| 100      | ~30 seconds    | $0.05          |
-| 500      | ~2 minutes     | $0.20          |
-| 1000     | ~4 minutes     | $0.40          |
-| 5000     | ~20 minutes    | $2.00          |
-
----
-
-## 🔐 Environment Variables
-
-No required environment variables for basic usage. Optional:
-
-```env
-# Logging
-LOG_LEVEL=info              # debug, info, warn, error
-APIFY_LOG_FORMAT=json       # json or text
-
-# Actor runtime
-APIFY_HEADLESS=1            # Run browser in headless mode
-APIFY_DEFAULT_DATASET_ID    # Auto-configured by Apify
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Common Errors
-
-**Error: "No input provided"**
-```bash
-Solution: Ensure INPUT.json exists or provide input via Apify Console
-```
-
-**Error: "No valid Instagram post URLs"**
-```bash
-Solution: Check URL format matches: https://www.instagram.com/p/ABC123/
-```
-
-**Build fails: "Cannot find module './types/Input.js'"**
-```bash
-Solution: Run `npm run build` before `npm start`
-```
-
----
-
-## 📚 API Reference
-
-### `validateAndNormalizeInput(input: unknown): NormalizedInput`
-
-Validates and normalizes raw Actor input.
-
-**Throws:**
-- `Error` if required fields missing
-- `Error` if URL format invalid
-- `Error` if array length constraints violated
-
-**Returns:** `NormalizedInput` with all defaults applied
-
----
-
-## 🔄 Migration from v1.x
-
-**Changes in v2.0:**
-
-1. ❌ **Removed** 25+ enterprise fields (webhooks, AI config, caching, etc.)
-2. ✅ **Added** TypeScript strict mode
-3. ✅ **Simplified** to 4 input parameters
-4. ✅ **Improved** validation and error messages
-5. ✅ **Changed** `start` script to run compiled `dist/index.js`
-
-**Breaking changes:**
-- Input schema now requires URL pattern validation
-- No backward compatibility with v1.x schemas
-- Must rebuild with `npm run build` before running
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## 🤝 Support
-
-- **Issues**: [GitHub Issues](https://github.com/your-org/ig-comment-lead/issues)
-- **Docs**: [Apify Documentation](https://docs.apify.com)
-- **Community**: [Apify Discord](https://discord.com/invite/jyEM2PRvMU)
-
----
-
-**Built with ❤️ using TypeScript + Apify SDK**
-
-[🚀 Try on Apify](https://console.apify.com) | [📖 View Source](https://github.com/your-org/ig-comment-lead)
+MIT

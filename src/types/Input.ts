@@ -1,69 +1,50 @@
 /**
- * Instagram Comment Lead Intelligence - Input Schema Types
- * 
- * This file defines the strict TypeScript interface matching the JSON schema
- * defined in .actor/input_schema.json
+ * Strict TypeScript types for the Actor input schema.
+ *
+ * Source of truth: .actor/input_schema.json
+ * Any change here MUST be reflected in the JSON schema and vice-versa.
  */
 
-/**
- * Main input schema interface for the Apify Actor
- */
+/** Raw input as received from Actor.getInput(). */
 export interface InputSchema {
-  /**
-   * List of Instagram post or reel URLs to analyze for leads
-   * @minItems 1
-   * @maxItems 50
-   * @pattern ^https?://(www\.)?instagram\.com/(p|reel)/[A-Za-z0-9_-]+/?$
-   */
+  /** Instagram post or reel URLs to analyse. */
   postUrls: string[];
 
-  /**
-   * Maximum number of comments to retrieve from each post
-   * @default 1000
-   * @minimum 10
-   * @maximum 10000
-   */
+  /** Max comments to fetch per post. @default 1000 */
   maxCommentsPerPost?: number;
 
-  /**
-   * Target number of qualified leads to extract
-   * Processing stops early when target is reached
-   * @default 50
-   * @minimum 1
-   * @maximum 1000
-   */
+  /** Stop after this many qualified leads. @default 50 */
   targetLeads?: number;
 
-  /**
-   * Minimum lead quality score (0.0 to 1.0) required to include in results
-   * @default 0.4
-   * @minimum 0.0
-   * @maximum 1.0
-   */
+  /** Minimum lead-quality score (0–1) to include in results. @default 0.4 */
   minLeadScore?: number;
 }
 
 /**
- * Input schema with all required defaults applied
+ * Input with every optional field resolved to a concrete value.
+ *
+ * Derived from InputSchema via Required<> so the two can never drift:
+ * adding an optional field to InputSchema automatically surfaces here.
  */
-export interface NormalizedInput {
-  postUrls: string[];
-  maxCommentsPerPost: number;
-  targetLeads: number;
-  minLeadScore: number;
-}
+export type NormalizedInput = Required<InputSchema>;
 
 /**
- * Default values for optional input fields
+ * Defaults for optional fields.
+ *
+ * The `satisfies` clause is a compile-time sync guard:
+ * adding an optional field to InputSchema without a matching default
+ * here is an immediate type error.
  */
 export const INPUT_DEFAULTS = {
   maxCommentsPerPost: 1000,
   targetLeads: 50,
   minLeadScore: 0.4,
-} as const;
+} as const satisfies Required<Omit<InputSchema, 'postUrls'>>;
 
 /**
- * Validation constraints
+ * Validation constraints mirroring .actor/input_schema.json.
+ *
+ * Regex, min/max values must match the JSON schema exactly.
  */
 export const INPUT_CONSTRAINTS = {
   postUrls: {
@@ -71,16 +52,7 @@ export const INPUT_CONSTRAINTS = {
     maxItems: 50,
     pattern: /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/,
   },
-  maxCommentsPerPost: {
-    min: 10,
-    max: 10000,
-  },
-  targetLeads: {
-    min: 1,
-    max: 1000,
-  },
-  minLeadScore: {
-    min: 0.0,
-    max: 1.0,
-  },
+  maxCommentsPerPost: { min: 10, max: 10_000 },
+  targetLeads: { min: 1, max: 1_000 },
+  minLeadScore: { min: 0, max: 1 },
 } as const;

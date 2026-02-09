@@ -122,8 +122,6 @@
                 "enum": [
                     "BUY_INTENT",
                     "QUESTION",
-                    "INFLUENCER",
-                    "SPAM",
                     "PROMOTER_SPAM",
                     "RANDOM"
                 ],

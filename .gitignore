@@ -1,17 +1,8 @@
+# Build output (compiled by tsc to dist/)
+dist/
+
 # Dependencies
 node_modules/
-package-lock.json
-
-# Build output
-dist/
-*.js
-*.js.map
-*.d.ts
-*.d.ts.map
-
-# Exclude JavaScript source files but keep configuration
-!jest.config.mjs
-!.eslintrc.js
 
 # Apify storage
 apify_storage/

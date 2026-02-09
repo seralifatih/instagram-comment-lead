@@ -1,12 +1,9 @@
 {
     "actorSpecification": 1,
     "name": "instagram-comment-lead-intelligence",
-    "title": "Instagram Comment Lead Intelligence API",
-    "description": "Minimal production-ready lead generation from Instagram comments using AI-powered intent detection and quality scoring. Extract qualified leads with configurable filtering.",
+    "title": "Instagram Comment Lead Intelligence",
+    "description": "Extract qualified leads from Instagram post and reel comments with intent detection and lead scoring.",
     "version": "2.0.0",
-    "meta": {
-        "templateId": "instagram-lead-gen"
-    },
     "build": {
         "dockerfile": "./Dockerfile"
     },
@@ -14,113 +11,67 @@
     "storages": {
         "dataset": {
             "actorSpecification": 1,
-            "title": "Instagram Leads Dataset",
+            "title": "Instagram Leads",
             "views": {
                 "overview": {
-                    "title": "Lead Overview",
+                    "title": "All Leads",
                     "transformation": {
                         "fields": [
-                            "leadId",
                             "username",
-                            "fullName",
-                            "leadScore",
+                            "text",
                             "intent",
-                            "comment",
-                            "contactInfo.email",
-                            "contactInfo.phone",
-                            "signals.urgency",
-                            "signals.purchaseIntent",
-                            "engagement.commentLikes",
-                            "timestamp"
+                            "intent_score",
+                            "leadScore",
+                            "is_lead",
+                            "postUrl",
+                            "likeCount",
+                            "postedAt"
                         ]
                     },
                     "display": {
                         "component": "table",
                         "properties": {
-                            "leadId": {
-                                "label": "Lead ID",
-                                "format": "text"
-                            },
                             "username": {
                                 "label": "Username",
                                 "format": "text"
                             },
-                            "leadScore": {
-                                "label": "Score",
-                                "format": "number"
+                            "text": {
+                                "label": "Comment",
+                                "format": "text"
                             },
                             "intent": {
                                 "label": "Intent",
                                 "format": "text"
+                            },
+                            "intent_score": {
+                                "label": "Score",
+                                "format": "number"
+                            },
+                            "leadScore": {
+                                "label": "Quality",
+                                "format": "text"
+                            },
+                            "is_lead": {
+                                "label": "Lead?",
+                                "format": "boolean"
+                            },
+                            "postUrl": {
+                                "label": "Post",
+                                "format": "link"
+                            },
+                            "likeCount": {
+                                "label": "Likes",
+                                "format": "number"
+                            },
+                            "postedAt": {
+                                "label": "Posted",
+                                "format": "date"
                             }
                         }
-                    }
-                },
-                "highScoreLeads": {
-                    "title": "High-Score Leads (>0.7)",
-                    "transformation": {
-                        "fields": [
-                            "leadId",
-                            "username",
-                            "leadScore",
-                            "intent",
-                            "comment",
-                            "contactInfo"
-                        ],
-                        "limit": 100,
-                        "desc": true,
-                        "sort": [
-                            "leadScore"
-                        ]
                     }
                 }
             }
         }
     },
-    "platform": "node",
-    "categories": [
-        "SOCIAL_MEDIA",
-        "MARKETING",
-        "LEAD_GENERATION",
-        "BUSINESS_INTELLIGENCE"
-    ],
-    "tags": [
-        "instagram",
-        "lead-generation",
-        "ai",
-        "crm",
-        "sales",
-        "marketing",
-        "intent-detection",
-        "spam-filter",
-        "lead-scoring",
-        "social-media",
-        "nlp",
-        "openai",
-        "gpt-4",
-        "b2b",
-        "saas",
-        "ecommerce"
-    ],
-    "author": {
-        "name": "Your Company Name",
-        "email": "support@yourcompany.com",
-        "url": "https://yourcompany.com"
-    },
-    "readme": "./README.md",
-    "changelog": "./CHANGELOG.md",
-    "icon": {
-        "type": "url",
-        "value": "https://apify.com/your-org/instagram-comment-lead-intelligence/icon.png"
-    },
-    "isPublic": true,
-    "seoTitle": "Instagram Lead Generation API - AI-Powered Comment Analysis",
-    "seoDescription": "Transform Instagram comments into qualified sales leads with AI. Automated lead scoring, intent detection, spam filtering, and contact extraction. Perfect for B2B, SaaS, and e-commerce.",
-    "pricingModel": "RENT_PLUS",
-    "pricing": {
-        "minMonthlyRent": 49,
-        "computeUnits": {
-            "per1000Comments": 10
-        }
-    }
+    "platform": "node"
 }
