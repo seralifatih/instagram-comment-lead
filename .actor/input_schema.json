@@ -1,217 +1,366 @@
 {
-    "title": "Instagram Comment Lead Intelligence",
+    "title": "Instagram Comment Lead Intelligence API - Input Configuration",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
-        "targetUrls": {
-            "title": "Target URLs (Posts or Profiles)",
+        "postUrls": {
+            "title": "Instagram Post URLs",
             "type": "array",
-            "description": "List of Instagram Post or Profile URLs. Profiles will be expanded to their latest posts.",
+            "description": "List of Instagram post URLs to analyze. Enter full URLs like: https://www.instagram.com/p/ABC123xyz/",
             "editor": "requestListSources",
+            "example": [
+                "https://www.instagram.com/p/C3xYz1234Ab/",
+                "https://www.instagram.com/p/C3xYz5678Cd/"
+            ],
+            "items": {
+                "type": "string",
+                "pattern": "^https?://(www\\.)?instagram\\.com/p/[A-Za-z0-9_-]+/?$"
+            },
+            "minItems": 1,
+            "maxItems": 10,
             "prefill": [
-                {
-                    "url": "https://www.instagram.com/p/Cush2lzNPk/"
-                }
+                "https://www.instagram.com/p/C3xYz1234Ab/"
             ]
-        },
-        "sessionId": {
-            "title": "Session ID (Required)",
-            "type": "string",
-            "description": "Instagram 'sessionid' cookie value only (not the full cookie string).",
-            "editor": "textfield",
-            "isSecret": true
-        },
-        "sessionCookie": {
-            "title": "Session Cookie (Optional)",
-            "type": "string",
-            "description": "Full browser cookie string copied from DevTools (must include sessionid=...). The actor will extract sessionid automatically.",
-            "editor": "textfield",
-            "isSecret": true
         },
         "maxComments": {
-            "title": "Max Comments Per Post",
+            "title": "Maximum Comments per Post",
             "type": "integer",
-            "description": "Limit the depth of scraping to save costs.",
+            "description": "Maximum number of comments to retrieve from each Instagram post. Higher values increase accuracy but also processing time and costs. Recommended: 100-500 for most use cases.",
             "default": 1000,
-            "minimum": 1
-        },
-        "maxPages": {
-            "title": "Max Comment Pages (Optional)",
-            "type": "integer",
-            "description": "Maximum number of comment pages to paginate through. Leave empty for all pages.",
-            "minimum": 1
+            "minimum": 10,
+            "maximum": 5000,
+            "editor": "number",
+            "example": 1000,
+            "sectionCaption": "Comment Collection Settings",
+            "sectionDescription": "Configure how many comments to fetch and analyze from each post"
         },
         "samplingMode": {
-            "title": "Sampling Mode",
+            "title": "Sampling Strategy",
             "type": "string",
-            "description": "Choose how to sample comments.",
+            "description": "How to sample comments when maxComments is less than total available. Choose the strategy that best fits your goals:\n\n• ALL: Process every comment (most comprehensive, highest cost)\n• TOP_LIKED: Prioritize most-liked comments (best for viral posts)\n• RANDOM: Uniform random sampling (unbiased distribution)\n• RECENT: Newest comments first (best for time-sensitive campaigns)\n• BALANCED: Mix of top, random, and recent (recommended for most cases)",
             "editor": "select",
-            "default": "ALL",
             "enum": [
                 "ALL",
+                "TOP_LIKED",
                 "RANDOM",
-                "TOP_LIKED"
-            ]
+                "RECENT",
+                "BALANCED"
+            ],
+            "enumTitles": [
+                "All Comments (No Sampling)",
+                "Top Liked Comments First",
+                "Random Sampling",
+                "Most Recent Comments",
+                "Balanced Mix (Recommended)"
+            ],
+            "default": "TOP_LIKED",
+            "example": "TOP_LIKED"
         },
         "samplingProbability": {
-            "title": "Sampling Probability",
+            "title": "Sampling Probability (for RANDOM mode)",
             "type": "number",
-            "description": "For RANDOM mode: probability to skip a page (0-1).",
-            "default": 0.3,
-            "minimum": 0,
-            "maximum": 1
+            "description": "When using RANDOM sampling, this sets the probability (0.0 to 1.0) that each comment will be included. For example, 0.3 means ~30% of comments will be randomly selected. Only applies when samplingMode is RANDOM.",
+            "default": 0.5,
+            "minimum": 0.01,
+            "maximum": 1.0,
+            "editor": "number",
+            "example": 0.5
         },
         "minLikes": {
-            "title": "Minimum Likes (TOP_LIKED)",
+            "title": "Minimum Comment Likes Filter",
             "type": "integer",
-            "description": "For TOP_LIKED mode: minimum likes required for a comment to be processed.",
-            "default": 5,
-            "minimum": 0
+            "description": "Only analyze comments that have at least this many likes. Helps filter out low-engagement comments that are less likely to be quality leads. Set to 0 to disable this filter.",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000,
+            "editor": "number",
+            "example": 2
         },
         "targetLeadCount": {
-            "title": "Target High-Intent Lead Count",
+            "title": "Target Number of Qualified Leads",
             "type": "integer",
-            "description": "Stop scraping when HIGH intent leads reach this number.",
+            "description": "Desired number of qualified leads to extract. The AI will adjust filtering thresholds to try to achieve this target. Higher values may include lower-quality leads. Set to 0 for no target (returns all leads above minLeadScore).",
             "default": 50,
-            "minimum": 1
-        },
-        "userDefinedLimitMB": {
-            "title": "Max Dataset Size (MB)",
-            "type": "number",
-            "description": "Abort if estimated dataset size exceeds this limit.",
-            "minimum": 1
-        },
-        "scrapeSince": {
-            "title": "Delta Mode (Scrape Comments Since)",
-            "type": "string",
-            "description": "Only scrape comments posted AFTER this date. Format: YYYY-MM-DD or ISO. Leave empty for all.",
-            "editor": "textfield",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}(.*)?$"
-        },
-        "enrichLeads": {
-            "title": "Enrich High-Intent Leads",
-            "type": "boolean",
-            "description": "If enabled, the actor will visit lead profiles to obtain follower buckets and tiers.",
-            "default": false
-        },
-        "intentWeights": {
-            "title": "Intent Weights Override (Optional)",
-            "type": "object",
-            "description": "JSON dictionary to override intent keyword weights. Example: {\"BUY_INTENT\": {\"buy\": 0.9, \"order\": 0.7}}",
-            "editor": "json"
-        },
-        "languageDetection": {
-            "title": "Language Detection (Optional)",
-            "type": "object",
-            "description": "Lightweight language detection settings. Enable FastText only if FASTTEXT_BIN and FASTTEXT_MODEL are available.",
-            "editor": "json",
-            "default": {
-                "enableFastText": false,
-                "fastTextMinChars": 20,
-                "fastTextTimeoutMs": 2000
-            },
-            "properties": {
-                "enableFastText": {
-                    "title": "Enable FastText",
-                    "type": "boolean",
-                    "description": "Use fastText CLI as a fallback (requires FASTTEXT_BIN and FASTTEXT_MODEL).",
-                    "default": false
-                },
-                "fastTextMinChars": {
-                    "title": "FastText Min Chars",
-                    "type": "integer",
-                    "description": "Minimum characters required to call FastText.",
-                    "minimum": 0
-                },
-                "fastTextTimeoutMs": {
-                    "title": "FastText Timeout (ms)",
-                    "type": "integer",
-                    "description": "Timeout for the FastText process in milliseconds.",
-                    "minimum": 0
-                }
-            }
-        },
-        "maxPostsPerProfile": {
-            "title": "Max Posts Per Profile",
-            "type": "integer",
-            "description": "If a profile URL is provided, scrape this many recent posts.",
-            "default": 3
+            "minimum": 0,
+            "maximum": 1000,
+            "editor": "number",
+            "example": 50,
+            "sectionCaption": "Lead Quality & Filtering",
+            "sectionDescription": "Control the quality and quantity of leads returned"
         },
         "minLeadScore": {
-            "title": "Minimum Lead Score",
-            "type": "string",
-            "description": "Filter output to only include leads at or above this category (LOW, MEDIUM, HIGH).",
+            "title": "Minimum Lead Score Threshold",
+            "type": "number",
+            "description": "Minimum AI-calculated lead score (0.0 to 1.0) required to include a lead in results. Higher values = higher quality but fewer leads.\n\nRecommended thresholds:\n• 0.3-0.4: Broad lead capture\n• 0.5-0.6: Balanced quality (recommended)\n• 0.7-0.8: High-quality leads only\n• 0.9+: Ultra-qualified leads",
+            "default": 0.4,
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "editor": "number",
+            "example": 0.5
+        },
+        "excludeSpam": {
+            "title": "Enable Spam Filtering",
+            "type": "boolean",
+            "description": "Automatically filter out spam, bot comments, and low-quality engagement. Highly recommended to keep enabled unless you want to see all comments for analysis.",
+            "default": true,
+            "editor": "checkbox",
+            "example": true
+        },
+        "spamFilterThreshold": {
+            "title": "Spam Detection Sensitivity",
+            "type": "number",
+            "description": "Threshold (0.0 to 1.0) for spam classification. Higher values = more aggressive filtering.\n\n• 0.5-0.6: Lenient (fewer false positives)\n• 0.7: Balanced (recommended)\n• 0.8-0.9: Strict (may filter some legitimate comments)",
+            "default": 0.7,
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "editor": "number",
+            "example": 0.7
+        },
+        "includeContactInfo": {
+            "title": "Extract Contact Information",
+            "type": "boolean",
+            "description": "Extract and highlight email addresses and phone numbers found in comments. Enables quick follow-up with interested prospects.",
+            "default": true,
+            "editor": "checkbox",
+            "example": true
+        },
+        "intentFilters": {
+            "title": "Filter by Intent Types",
+            "type": "array",
+            "description": "Only include leads with specific detected intents. Leave empty to include all intent types. Useful for targeted lead generation campaigns.",
             "editor": "select",
-            "default": "LOW",
-            "enum": [
-                "LOW",
-                "MEDIUM",
-                "HIGH"
+            "items": {
+                "type": "string",
+                "enum": [
+                    "purchase_intent",
+                    "information_seeking",
+                    "contact_request",
+                    "feedback",
+                    "general_engagement"
+                ]
+            },
+            "uniqueItems": true,
+            "default": [],
+            "example": [
+                "purchase_intent",
+                "contact_request"
+            ],
+            "sectionCaption": "Advanced Filtering Options",
+            "sectionDescription": "Fine-tune which types of leads to capture"
+        },
+        "includeVerifiedOnly": {
+            "title": "Verified Accounts Only",
+            "type": "boolean",
+            "description": "Only include comments from verified Instagram accounts (blue checkmark). Useful for B2B or high-value lead generation.",
+            "default": false,
+            "editor": "checkbox",
+            "example": false
+        },
+        "minFollowerCount": {
+            "title": "Minimum Follower Count",
+            "type": "integer",
+            "description": "Only include comments from users with at least this many followers. Helps identify influencers or established accounts. Set to 0 to disable.",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000000,
+            "editor": "number",
+            "example": 1000
+        },
+        "excludeKeywords": {
+            "title": "Keyword Exclusion List",
+            "type": "array",
+            "description": "Comments containing these keywords will be automatically excluded. Useful for filtering competitor mentions, irrelevant topics, or specific terms. Case-insensitive matching.",
+            "editor": "stringList",
+            "items": {
+                "type": "string"
+            },
+            "default": [],
+            "example": [
+                "spam",
+                "bot",
+                "check my profile"
+            ]
+        },
+        "requireKeywords": {
+            "title": "Required Keywords Filter",
+            "type": "array",
+            "description": "Only include comments that contain at least one of these keywords. Useful for focused lead generation (e.g., 'demo', 'pricing', 'purchase'). Leave empty to disable.",
+            "editor": "stringList",
+            "items": {
+                "type": "string"
+            },
+            "default": [],
+            "example": [
+                "price",
+                "buy",
+                "demo",
+                "interested"
             ]
         },
         "webhookUrl": {
-            "title": "Webhook URL",
+            "title": "Webhook URL (Optional)",
             "type": "string",
-            "description": "Optional webhook URL to receive high-intent leads (leadScore HIGH and intent_score > 0.7).",
-            "editor": "textfield"
+            "description": "POST results to this URL when processing completes. Useful for integrating with your CRM, Slack, Zapier, or custom systems. Must be a valid HTTPS URL.",
+            "editor": "textfield",
+            "pattern": "^https://.*$",
+            "example": "https://hooks.zapier.com/hooks/catch/123456/abcdef/",
+            "sectionCaption": "Integration & Output Settings",
+            "sectionDescription": "Configure how and where to send your lead data"
         },
-        "webhookConfig": {
-            "title": "Webhook Retry Settings (Optional)",
-            "type": "object",
-            "description": "Advanced retry/backoff settings for webhook delivery. Leave empty to use defaults.",
-            "editor": "json",
-            "default": {
-                "maxRetries": 4,
-                "baseDelayMs": 500,
-                "maxDelayMs": 8000,
-                "timeoutMs": 8000,
-                "concurrency": 3
-            },
-            "properties": {
-                "maxRetries": {
-                    "title": "Max Retries",
-                    "type": "integer",
-                    "description": "Number of retry attempts for failed webhook calls.",
-                    "minimum": 0
-                },
-                "baseDelayMs": {
-                    "title": "Base Delay (ms)",
-                    "type": "integer",
-                    "description": "Base delay used for exponential backoff in milliseconds.",
-                    "minimum": 0
-                },
-                "maxDelayMs": {
-                    "title": "Max Delay (ms)",
-                    "type": "integer",
-                    "description": "Maximum backoff delay in milliseconds.",
-                    "minimum": 0
-                },
-                "timeoutMs": {
-                    "title": "Request Timeout (ms)",
-                    "type": "integer",
-                    "description": "Timeout for webhook HTTP requests in milliseconds.",
-                    "minimum": 0
-                },
-                "concurrency": {
-                    "title": "Webhook Concurrency",
-                    "type": "integer",
-                    "description": "Maximum number of concurrent webhook deliveries.",
-                    "minimum": 1
-                }
-            }
+        "webhookFormat": {
+            "title": "Webhook Payload Format",
+            "type": "string",
+            "description": "Format of the webhook payload sent to your endpoint.",
+            "editor": "select",
+            "enum": [
+                "json",
+                "slack",
+                "discord",
+                "custom"
+            ],
+            "enumTitles": [
+                "Standard JSON",
+                "Slack Message Format",
+                "Discord Webhook Format",
+                "Custom Format"
+            ],
+            "default": "json",
+            "example": "json"
         },
-        "proxyConfiguration": {
-            "title": "Proxy Configuration",
-            "type": "object",
-            "description": "Apify proxy settings. Leave default to use Apify Proxy.",
-            "editor": "proxy",
-            "default": {
-                "useApifyProxy": true
-            }
+        "notifyOnHighScoreLeads": {
+            "title": "Real-time Notifications for High-Score Leads",
+            "type": "boolean",
+            "description": "Send immediate webhook notifications when leads scoring above 0.8 are detected. Requires webhookUrl to be configured.",
+            "default": false,
+            "editor": "checkbox",
+            "example": false
+        },
+        "outputFormat": {
+            "title": "Output Data Format",
+            "type": "string",
+            "description": "Format for the final dataset output.",
+            "editor": "select",
+            "enum": [
+                "json",
+                "csv",
+                "xlsx"
+            ],
+            "enumTitles": [
+                "JSON (Recommended)",
+                "CSV (Excel Compatible)",
+                "Excel Spreadsheet (.xlsx)"
+            ],
+            "default": "json",
+            "example": "json"
+        },
+        "includeAnalytics": {
+            "title": "Include Analytics Summary",
+            "type": "boolean",
+            "description": "Add aggregate analytics and insights to the output, including intent distribution, urgency patterns, and common questions.",
+            "default": true,
+            "editor": "checkbox",
+            "example": true
+        },
+        "instagramApiKey": {
+            "title": "Instagram API Credentials",
+            "type": "string",
+            "description": "Your Instagram Graph API token or Apify Instagram Scraper API key. Required for fetching comment data.",
+            "editor": "textfield",
+            "isSecret": true,
+            "example": "your_api_key_here",
+            "sectionCaption": "API Credentials & Configuration",
+            "sectionDescription": "Required API keys and authentication tokens"
+        },
+        "openaiApiKey": {
+            "title": "OpenAI API Key",
+            "type": "string",
+            "description": "Your OpenAI API key for AI-powered lead analysis. Get one at https://platform.openai.com/api-keys. Required for lead scoring and intent detection.",
+            "editor": "textfield",
+            "isSecret": true,
+            "pattern": "^sk-[A-Za-z0-9_-]+$",
+            "example": "sk-proj-..."
+        },
+        "openaiModel": {
+            "title": "OpenAI Model",
+            "type": "string",
+            "description": "Which OpenAI model to use for analysis. GPT-4 Turbo recommended for best accuracy.",
+            "editor": "select",
+            "enum": [
+                "gpt-4-turbo-preview",
+                "gpt-4",
+                "gpt-3.5-turbo"
+            ],
+            "enumTitles": [
+                "GPT-4 Turbo (Recommended - Best Quality)",
+                "GPT-4 (High Quality)",
+                "GPT-3.5 Turbo (Faster, Lower Cost)"
+            ],
+            "default": "gpt-4-turbo-preview",
+            "example": "gpt-4-turbo-preview"
+        },
+        "maxConcurrency": {
+            "title": "Max Concurrent Requests",
+            "type": "integer",
+            "description": "Maximum number of API requests to process in parallel. Higher values = faster processing but higher rate limit risk. Recommended: 5-10.",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 20,
+            "editor": "number",
+            "example": 5,
+            "sectionCaption": "Performance & Rate Limiting",
+            "sectionDescription": "Configure processing speed and resource usage"
+        },
+        "requestDelayMs": {
+            "title": "Request Delay (milliseconds)",
+            "type": "integer",
+            "description": "Delay between API requests to avoid rate limiting. Increase if you encounter rate limit errors.",
+            "default": 1000,
+            "minimum": 100,
+            "maximum": 10000,
+            "editor": "number",
+            "example": 1000
+        },
+        "enableCaching": {
+            "title": "Enable Result Caching",
+            "type": "boolean",
+            "description": "Cache analysis results to avoid re-analyzing the same comments. Reduces costs for repeated runs on the same posts.",
+            "default": true,
+            "editor": "checkbox",
+            "example": true
+        },
+        "cacheExpirationHours": {
+            "title": "Cache Expiration (hours)",
+            "type": "integer",
+            "description": "How long to keep cached results before re-analyzing. Recommended: 24-168 hours.",
+            "default": 24,
+            "minimum": 1,
+            "maximum": 720,
+            "editor": "number",
+            "example": 24
+        },
+        "debugMode": {
+            "title": "Enable Debug Logging",
+            "type": "boolean",
+            "description": "Enable detailed logging for troubleshooting. Warning: May expose sensitive data in logs.",
+            "default": false,
+            "editor": "checkbox",
+            "example": false,
+            "sectionCaption": "Debugging & Advanced Options",
+            "sectionDescription": "Developer and troubleshooting settings"
+        },
+        "customPrompt": {
+            "title": "Custom AI Prompt Template",
+            "type": "string",
+            "description": "Advanced: Override the default AI prompt with your own. Use {{COMMENT}} placeholder for comment text. Leave empty to use default prompt.",
+            "editor": "textarea",
+            "default": "",
+            "example": "Analyze this Instagram comment for lead potential: {{COMMENT}}"
         }
     },
     "required": [
-        "targetUrls",
-        "sessionId"
-    ]
+        "postUrls",
+        "instagramApiKey",
+        "openaiApiKey"
+    ],
+    "additionalProperties": false
 }
