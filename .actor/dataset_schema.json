@@ -1,4 +1,4 @@
-﻿{
+{
     "actorSpecification": 1,
     "fields": {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -14,17 +14,9 @@
                 "type": "string",
                 "description": "Source post shortcode."
             },
-            "shortcode": {
-                "type": "string",
-                "description": "Instagram post shortcode."
-            },
             "username": {
                 "type": "string",
                 "description": "Comment author username."
-            },
-            "fullName": {
-                "type": ["string", "null"],
-                "description": "Comment author full name, if available."
             },
             "profileUrl": {
                 "type": "string",
@@ -45,67 +37,85 @@
                 "format": "date-time",
                 "description": "Timestamp of the comment."
             },
-            "isLead": {
-                "type": "boolean",
-                "description": "Whether the comment is considered a lead."
-            },
             "is_lead": {
                 "type": "boolean",
                 "description": "Whether the comment is considered a lead (snake_case)."
             },
             "leadScore": {
                 "type": "string",
-                "enum": ["HIGH", "LOW"],
-                "description": "Lead intent score."
+                "enum": [
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW"
+                ],
+                "description": "Categorical lead score (LOW, MEDIUM, HIGH)."
             },
             "intent": {
                 "type": "string",
                 "description": "Detected intent category."
             },
             "intent_score": {
-                "type": "integer",
-                "description": "Intent score (snake_case)."
-            },
-            "intentScore": {
-                "type": "integer",
-                "description": "Intent score."
-            },
-            "intentKeywords": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Matched intent keywords."
+                "type": "number",
+                "description": "Intent score (0-1)."
             },
             "keywords": {
                 "type": "array",
-                "items": { "type": "string" },
-                "description": "Matched keywords (snake_case)."
-            },
-            "language": {
-                "type": "string",
-                "description": "Detected language."
+                "items": {
+                    "type": "string"
+                },
+                "description": "Matched intent keywords."
             },
             "audience_qualification": {
-                "type": ["string", "null"],
-                "description": "Audience qualification bucket from enrichment."
-            },
-            "followerCount": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "description": "Follower count from enrichment."
-            },
-            "followerBucket": {
-                "type": ["string", "null"],
-                "description": "Follower bucket from enrichment."
-            },
-            "enrichedAt": {
-                "type": "string",
-                "format": "date-time",
-                "description": "Timestamp when enrichment was completed."
+                "type": [
+                    "object",
+                    "null"
+                ],
+                "description": "Audience qualification data.",
+                "properties": {
+                    "followers": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "description": "Follower count."
+                    },
+                    "bucket": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Follower bucket (<1k, 1k-10k, 10k-100k, 100k+)."
+                    },
+                    "tier": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "enum": [
+                            "low",
+                            "qualified",
+                            "high_value"
+                        ],
+                        "description": "Audience tier."
+                    }
+                },
+                "additionalProperties": true
             },
             "extractedAt": {
                 "type": "string",
                 "format": "date-time",
                 "description": "Timestamp when the data was extracted."
+            },
+            "lead_type": {
+                "type": "string",
+                "enum": [
+                    "BUY_INTENT",
+                    "QUESTION",
+                    "INFLUENCER",
+                    "SPAM",
+                    "RANDOM"
+                ],
+                "description": "Lead type classification."
             }
         },
         "additionalProperties": true
@@ -123,31 +133,78 @@
                     "intent_score",
                     "is_lead",
                     "keywords",
+                    "leadScore",
+                    "lead_type",
                     "audience_qualification",
                     "profileUrl",
                     "likeCount",
                     "postedAt",
-                    "leadScore",
                     "extractedAt"
                 ]
             },
             "display": {
                 "component": "table",
                 "properties": {
-                    "postUrl": { "label": "Post URL", "format": "link" },
-                    "source_shortcode": { "label": "Source Shortcode", "format": "text" },
-                    "username": { "label": "Username", "format": "text" },
-                    "text": { "label": "Comment", "format": "text" },
-                    "intent": { "label": "Intent", "format": "text" },
-                    "intent_score": { "label": "Intent Score", "format": "number" },
-                    "is_lead": { "label": "Is Lead", "format": "boolean" },
-                    "keywords": { "label": "Keywords", "format": "json" },
-                    "audience_qualification": { "label": "Audience", "format": "text" },
-                    "profileUrl": { "label": "Profile URL", "format": "link" },
-                    "likeCount": { "label": "Likes", "format": "number" },
-                    "postedAt": { "label": "Posted At", "format": "date" },
-                    "leadScore": { "label": "Lead Score", "format": "text" },
-                    "extractedAt": { "label": "Extracted At", "format": "date" }
+                    "postUrl": {
+                        "label": "Post URL",
+                        "format": "link"
+                    },
+                    "source_shortcode": {
+                        "label": "Source Shortcode",
+                        "format": "text"
+                    },
+                    "username": {
+                        "label": "Username",
+                        "format": "text"
+                    },
+                    "text": {
+                        "label": "Comment",
+                        "format": "text"
+                    },
+                    "intent": {
+                        "label": "Intent",
+                        "format": "text"
+                    },
+                    "intent_score": {
+                        "label": "Intent Score",
+                        "format": "number"
+                    },
+                    "is_lead": {
+                        "label": "Is Lead",
+                        "format": "boolean"
+                    },
+                    "keywords": {
+                        "label": "Keywords",
+                        "format": "json"
+                    },
+                    "leadScore": {
+                        "label": "Lead Score",
+                        "format": "text"
+                    },
+                    "audience_qualification": {
+                        "label": "Audience Qualification",
+                        "format": "json"
+                    },
+                    "profileUrl": {
+                        "label": "Profile URL",
+                        "format": "link"
+                    },
+                    "likeCount": {
+                        "label": "Likes",
+                        "format": "number"
+                    },
+                    "postedAt": {
+                        "label": "Posted At",
+                        "format": "date"
+                    },
+                    "extractedAt": {
+                        "label": "Extracted At",
+                        "format": "date"
+                    },
+                    "lead_type": {
+                        "label": "Lead Type",
+                        "format": "text"
+                    }
                 }
             }
         }

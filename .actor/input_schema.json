@@ -45,7 +45,7 @@
         "enrichLeads": {
             "title": "Enrich High-Intent Leads",
             "type": "boolean",
-            "description": "If enabled, the actor will visit the profile of 'High Intent' leads to get follower counts and engagement ratios. (Slower, uses more requests).",
+            "description": "If enabled, the actor will visit lead profiles to obtain follower buckets and tiers.",
             "default": false
         },
         "maxPostsPerProfile": {
@@ -53,6 +53,18 @@
             "type": "integer",
             "description": "If a profile URL is provided, scrape this many recent posts.",
             "default": 3
+        },
+        "minLeadScore": {
+            "title": "Minimum Lead Score",
+            "type": "string",
+            "description": "Filter output to only include leads at or above this category (LOW, MEDIUM, HIGH).",
+            "editor": "select",
+            "default": "LOW",
+            "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+            ]
         },
         "proxyConfiguration": {
             "title": "Proxy Configuration",

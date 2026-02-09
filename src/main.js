@@ -2,6 +2,7 @@ import { Actor } from 'apify';
 import { PlaywrightCrawler, Dataset, log, KeyValueStore } from 'crawlee';
 import { devices } from 'playwright';
 import natural from 'natural';
+import crypto from 'crypto';
 
 // --- SABİTLER ---
 const DEFAULT_MAX_POSTS = 3; // Profil linki verilirse son kaç post?
@@ -17,37 +18,77 @@ const LEAD_KEYWORDS = [
 ];
 
 const INTENT_PATTERNS = {
-    PURCHASE: [
-        /\b(price|fiyat|cost|dm|sipariş|siparis|order|buy|link|shipping|kargo|available|var mı|var mi|ne kadar|beden|size)\b/i
+    PURCHASE_INTENT: [
+        /\b(buy|order|purchase|satın|satin|sipariş|siparis|available|stock|stok|link|dm|pm|ship|shipping|kargo)\b/i
+    ],
+    PRICE_INQUIRY: [
+        /\b(price|fiyat|cost|how much|ne kadar|ücret|ucret)\b/i
     ],
     QUESTION: [
-        /\b(how|nasıl|nasil|where|nerede|info|detay|details)\b|\?/i
+        /\b(how|nasıl|nasil|where|nerede|info|detay|details|why|neden)\b|\?/i
     ],
-    COMPLAINT: [
-        /\b(fake|scam|broken|bad|never|hate|sorun|problem)\b/i
+    SERVICE_REQUEST: [
+        /\b(appointment|booking|reserve|rezervasyon|randevu|service|hizmet)\b/i
     ],
-    APPRECIATION: [
-        /\b(love|amazing|harika|super|great)\b/i
-    ]
+    INFLUENCER_INTEREST: [
+        /\b(collab|collaboration|influencer|sponsor|sponsorship|partner|review)\b/i
+    ],
+    OTHER: []
 };
 
-const INTENT_SCORES = {
-    PURCHASE: 90,
-    QUESTION: 70,
-    COMPLAINT: 80,
-    APPRECIATION: 10
+const INTENT_BASE_SCORES = {
+    PURCHASE_INTENT: 90,
+    PRICE_INQUIRY: 85,
+    SERVICE_REQUEST: 75,
+    QUESTION: 65,
+    INFLUENCER_INTEREST: 50,
+    OTHER: 0
 };
 
 const TOKENIZER = new natural.WordTokenizer();
+
+const LOW_SIGNAL_PHRASES = new Set([
+    'ok', 'okay', 'nice', 'cool', 'wow', 'woww', 'amazing', 'great', 'super', 'love',
+    'güzel', 'guzel', 'harika', 'mükemmel', 'mukemmel', 'süper', 'superb', '👍', '🔥', '😍'
+]);
+
+const SPAM_PATTERN = /\b(follow me|check my story|link in bio|dm me|subscribe)\b/i;
+
+const MAX_DEDUPE_SIZE = 200000;
+const SEEN_COMMENT_KEYS = new Set();
+
+const ENRICHMENT_CACHE = new Map();
+const ENRICHMENT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const ENRICHMENT_CACHE_MAX = 50000;
+
+const INTENT_CACHE = new Map();
+const INTENT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const INTENT_CACHE_MAX = 50000;
+
+let LLM_CONFIG = null;
+const LLM_STATE = {
+    requestsMade: 0,
+    pendingBatches: 0,
+    lastRequestAt: 0
+};
+
+const COMMENT_PROCESS_CONCURRENCY = 5;
+
+let LLM_BATCHER = null;
 
 const GLOBAL_STATS = {
     totalComments: 0,
     totalLeads: 0,
     intentBreakdown: {},
-    keywordCounts: new Map()
+    keywordCounts: new Map(),
+    filteredComments: 0,
+    duplicateComments: 0,
+    llmClassifications: 0
 };
 
 await Actor.init();
+LLM_CONFIG = getLlmConfig();
+LLM_BATCHER = createLlmBatcher(LLM_CONFIG);
 
 // --- GİRİŞ KONTROLÜ ---
 const input = (await Actor.getInput()) ?? {};
@@ -174,48 +215,77 @@ const crawler = new PlaywrightCrawler({
 
             log.info(`✅ Toplam ${comments.length} yorum bulundu.`);
 
-            // Sonuçları İşle ve Kaydet
-            for (const comment of comments) {
-                const analysis = analyzeComment(comment.text);
-                updateGlobalStats(analysis);
+            await processComments(comments, COMMENT_PROCESS_CONCURRENCY, async (comment) => {
+                const dedupeKey = getCommentDedupKey(comment, shortcode);
+                if (isDuplicateComment(dedupeKey)) {
+                    GLOBAL_STATS.duplicateComments += 1;
+                    return;
+                }
 
-                const profileUrl = `https://www.instagram.com/${comment.user.username}/`;
+                const shouldFilter = isLowSignalComment(comment.text);
+                if (shouldFilter) {
+                    GLOBAL_STATS.filteredComments += 1;
+                    return;
+                }
+
+                const analysis = await analyzeComment(comment.text);
+                if (!analysis) {
+                    GLOBAL_STATS.filteredComments += 1;
+                    return;
+                }
+
+                const username = comment.user.username;
+                const cached = getEnrichmentCache(username);
+                const followerBucket = cached?.follower_bucket ?? cached?.followerBucket ?? null;
+                const leadScoring = computeLeadScore(analysis.intent_score ?? 0, followerBucket, comment.text);
+                const isLead = isLeadQualified(analysis.intent_score ?? 0, followerBucket);
+                updateGlobalStats(analysis, isLead ? 'HIGH' : 'LOW');
+
+                const profileUrl = `https://www.instagram.com/${username}/`;
+                const leadType = classifyLeadType(comment.text, analysis);
                 const record = {
                     postUrl: originalUrl,
-                    shortcode,
                     source_shortcode: shortcode,
-                    username: comment.user.username,
-                    fullName: comment.user.full_name,
-                    profileUrl,
+                    username,
                     text: comment.text,
+                    intent: analysis.intent,
+                    intent_score: analysis.intent_score,
+                    is_lead: isLead,
+                    keywords: analysis.keywords,
+                    leadScore: leadScoring.category,
+                    lead_type: leadType,
+                    audience_qualification: cached?.audience_qualification ?? null,
+                    profileUrl,
                     likeCount: comment.comment_like_count,
                     postedAt: new Date(comment.created_at * 1000).toISOString(),
-                    isLead: analysis.isLead, // Potansiyel müşteri mi?
-                    is_lead: analysis.isLead,
-                    leadScore: analysis.score >= 70 ? 'HIGH' : 'LOW',
-                    intent: analysis.intent,
-                    intent_score: analysis.score,
-                    intentScore: analysis.score,
-                    intentKeywords: analysis.keywords,
-                    keywords: analysis.keywords,
-                    language: analysis.language,
-                    audience_qualification: null,
                     extractedAt: new Date().toISOString()
                 };
 
-                if (analysis.isLead && config.enrichLeads) {
+                if (config.enrichLeads && (analysis.intent_score ?? 0) > 0.5 && !cached) {
                     await requestQueue.addRequest({
                         url: profileUrl,
-                        uniqueKey: `enrich:${comment.id ?? comment.user.username}:${shortcode}`,
+                        uniqueKey: `enrich:${comment.id ?? username}:${shortcode}`,
                         userData: {
                             isEnrichment: true,
-                            commentData: record
+                            commentData: record,
+                            intent_score: analysis.intent_score
                         }
                     });
-                } else {
-                    await Dataset.pushData(record);
+                    return;
                 }
-            }
+
+                if (cached) {
+                    const scoring = computeLeadScore(analysis.intent_score ?? 0, followerBucket, comment.text);
+                    record.leadScore = scoring.category;
+                    record.is_lead = isLeadQualified(analysis.intent_score ?? 0, followerBucket);
+                    record.audience_qualification = cached.audience_qualification ?? null;
+                }
+                if (!meetsMinLeadScore(record.leadScore, config.minLeadScore)) {
+                    GLOBAL_STATS.filteredComments += 1;
+                    return;
+                }
+                await Dataset.pushData(record);
+            });
         }
     },
 
@@ -280,18 +350,45 @@ async function handleProfile(page, queue, limit) {
 async function handleEnrichment(page, commentData) {
     const followerCount = await extractFollowerCount(page);
     const followerBucket = bucketFollowerCount(followerCount);
+    const intentScore = typeof commentData?.intent_score === 'number'
+        ? commentData.intent_score
+        : typeof commentData?.intentScore === 'number'
+            ? commentData.intentScore / 100
+            : 0;
+    const engagementProxy = getEngagementProxy(commentData?.likeCount, followerCount);
+    const leadScoring = computeLeadScore(intentScore, followerBucket, commentData?.text || '');
+    const isLead = isLeadQualified(intentScore, followerBucket);
 
     if (followerCount === null) {
         log.warning(`Takipçi sayısı bulunamadı: ${page.url()}`);
     }
 
-    await Dataset.pushData({
+    const audienceQualification = buildAudienceQualification(followerCount, followerBucket);
+    const cachePayload = {
+        follower_bucket: followerBucket ?? null,
+        audience_qualification: audienceQualification,
+        engagement_proxy: engagementProxy,
+        follower_count: followerCount ?? null
+    };
+
+    if (commentData?.username) {
+        setEnrichmentCache(commentData.username, cachePayload);
+    }
+
+    const outputRecord = {
         ...(commentData || {}),
-        followerCount,
-        followerBucket,
-        audience_qualification: followerBucket ?? null,
-        enrichedAt: new Date().toISOString()
-    });
+        is_lead: isLead,
+        leadScore: leadScoring.category,
+        audience_qualification: audienceQualification,
+        extractedAt: commentData?.extractedAt || new Date().toISOString()
+    };
+
+    if (!meetsMinLeadScore(outputRecord.leadScore, config.minLeadScore)) {
+        GLOBAL_STATS.filteredComments += 1;
+        return;
+    }
+
+    await Dataset.pushData(outputRecord);
 }
 
 async function extractFollowerCount(page) {
@@ -338,11 +435,11 @@ function parseFollowerCount(text) {
 }
 
 function bucketFollowerCount(count) {
-    if (typeof count !== 'number' || Number.isNaN(count)) return 'Unknown';
-    if (count < 1000) return 'Nano (<1k)';
-    if (count < 10000) return 'Micro (1k-10k)';
-    if (count < 100000) return 'Mid-Tier (10k-100k)';
-    return 'Macro (>100k)';
+    if (typeof count !== 'number' || Number.isNaN(count)) return null;
+    if (count < 1000) return '<1k';
+    if (count < 10000) return '1k-10k';
+    if (count < 100000) return '10k-100k';
+    return '100k+';
 }
 
 async function randomDelay(minMs, maxMs, page) {
@@ -366,6 +463,59 @@ function parseScrapeSince(value) {
         return null;
     }
     return Math.floor(date.getTime() / 1000);
+}
+
+function getCommentDedupKey(comment, shortcode) {
+    const username = comment?.user?.username || '';
+    const text = comment?.text || '';
+    const base = `${shortcode || ''}|${username}|${text}`;
+    return `dedupe:${crypto.createHash('sha1').update(base).digest('hex')}`;
+}
+
+function isDuplicateComment(key) {
+    if (SEEN_COMMENT_KEYS.has(key)) return true;
+    SEEN_COMMENT_KEYS.add(key);
+    if (SEEN_COMMENT_KEYS.size > MAX_DEDUPE_SIZE) {
+        SEEN_COMMENT_KEYS.clear();
+    }
+    return false;
+}
+
+function getLlmConfig() {
+    const apiKey = process.env.LEAD_LLM_API_KEY || process.env.OPENAI_API_KEY || null;
+    const rawEndpoint = process.env.LEAD_LLM_ENDPOINT || process.env.OPENAI_BASE_URL || null;
+    const endpoint = rawEndpoint
+        ? (rawEndpoint.endsWith('/chat/completions')
+            ? rawEndpoint
+            : `${rawEndpoint.replace(/\/$/, '')}/chat/completions`)
+        : 'https://api.openai.com/v1/chat/completions';
+    const model = process.env.LEAD_LLM_MODEL || 'gpt-4o-mini';
+    const maxRequests = Number(process.env.LEAD_LLM_MAX_REQUESTS || 25);
+    const timeoutMs = Number(process.env.LEAD_LLM_TIMEOUT_MS || 8000);
+    const minChars = Number(process.env.LEAD_LLM_MIN_CHARS || 6);
+    const batchSize = Number(process.env.LEAD_LLM_BATCH_SIZE || 6);
+    const batchWaitMs = Number(process.env.LEAD_LLM_BATCH_WAIT_MS || 150);
+    const maxParallel = Number(process.env.LEAD_LLM_MAX_PARALLEL || 1);
+    const minIntervalMs = Number(process.env.LEAD_LLM_MIN_INTERVAL_MS || 400);
+
+    const enabled = Boolean(apiKey);
+    if (enabled) {
+        log.info(`LLM fallback enabled. Max requests: ${maxRequests}`);
+    }
+
+    return {
+        enabled,
+        apiKey,
+        endpoint,
+        model,
+        maxRequests,
+        timeoutMs,
+        minChars,
+        batchSize: Math.max(1, batchSize),
+        batchWaitMs: Math.max(50, batchWaitMs),
+        maxParallel: Math.max(1, maxParallel),
+        minIntervalMs: Math.max(0, minIntervalMs)
+    };
 }
 
 // 2. Sayfa içinden Media ID'yi bulur veya hesaplar
@@ -465,24 +615,69 @@ async function fetchComments(page, mediaId, maxComments, appId, scrapeSince) {
 
 
 // 4. Lead Kelime Analizi
-function checkIsLead(text) {
+function hasIntentSignal(text) {
     if (!text) return false;
-    const lowerText = text.toLowerCase();
-    return LEAD_KEYWORDS.some(keyword => lowerText.includes(keyword));
+    for (const patterns of Object.values(INTENT_PATTERNS)) {
+        for (const pattern of patterns) {
+            if (pattern.test(text)) return true;
+        }
+    }
+    return false;
 }
 
-function analyzeComment(text) {
-    if (!text || typeof text !== 'string') {
-        return {
-            intent: 'OTHER',
-            score: 0,
-            isLead: false,
-            keywords: [],
-            language: 'unknown'
-        };
-    }
+function filterComment(commentText) {
+    if (!commentText || typeof commentText !== 'string') return false;
+    const trimmed = commentText.trim();
+    if (!trimmed) return false;
+    if (trimmed.length < 3) return false;
 
-    const tokens = TOKENIZER.tokenize(text);
+    const lower = trimmed.toLowerCase();
+    if (SPAM_PATTERN.test(lower)) return false;
+
+    // Only mentions or hashtags
+    const mentionHashRemainder = trimmed
+        .replace(/[@#][\w-]+/g, '')
+        .replace(/\s+/g, '')
+        .trim();
+    if (!mentionHashRemainder) return false;
+
+    // Only emojis
+    const emojiRemainder = trimmed
+        .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, '')
+        .replace(/\s+/g, '')
+        .trim();
+    if (!emojiRemainder) return false;
+
+    return true;
+}
+
+function isLowSignalComment(text) {
+    if (!filterComment(text)) return true;
+    const trimmed = text.trim();
+
+    const normalized = trimmed.toLowerCase();
+    if (hasIntentSignal(normalized)) return false;
+
+    const cleaned = normalized
+        .replace(/https?:\/\/\S+/g, '')
+        .replace(/[@#][\w-]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!cleaned) return true;
+    if (LOW_SIGNAL_PHRASES.has(cleaned)) return true;
+    if (/^(.){3,}$/.test(cleaned)) return true;
+    if (/^[\d\W_]+$/.test(cleaned)) return true;
+
+    const alphaCount = cleaned.replace(/[^a-zA-Z????????????]/g, '').length;
+    if (alphaCount === 0 && !/\d/.test(cleaned)) return true;
+    const tokens = TOKENIZER.tokenize(cleaned);
+    if (cleaned.length <= 4 && alphaCount <= 2 && tokens.length <= 1) return true;
+
+    return false;
+}
+
+function classifyIntentHeuristic(text) {
     const normalizedText = text.toLowerCase();
     const keywordMatches = new Map();
 
@@ -506,12 +701,12 @@ function analyzeComment(text) {
     }
 
     let intent = 'OTHER';
-    let score = 0;
-    for (const [candidate, candidateScore] of Object.entries(INTENT_SCORES)) {
+    let baseScore = 0;
+    for (const [candidate, candidateScore] of Object.entries(INTENT_BASE_SCORES)) {
         if (!keywordMatches.has(candidate)) continue;
-        if (candidateScore > score) {
+        if (candidateScore > baseScore) {
             intent = candidate;
-            score = candidateScore;
+            baseScore = candidateScore;
         }
     }
 
@@ -519,20 +714,349 @@ function analyzeComment(text) {
         ? []
         : Array.from(keywordMatches.get(intent) ?? []);
 
-    const language = /[şğıçöü]/i.test(text) ? 'tr' : 'en';
+    const intentScore = intent === 'OTHER'
+        ? 0.1
+        : Math.min(0.98, 0.45 + 0.15 * keywords.length);
 
     return {
         intent,
-        score,
-        isLead: score >= 70,
+        score: baseScore,
+        intent_score: intentScore,
         keywords,
-        language
+        confidence: intentScore,
+        source: 'heuristic',
+        language: detectLanguage(text)
     };
 }
 
-function updateGlobalStats(analysis) {
+function shouldUseLLMFallback(text, heuristic) {
+    if (!LLM_CONFIG || !LLM_CONFIG.enabled) return false;
+    if (LLM_STATE.requestsMade >= LLM_CONFIG.maxRequests) return false;
+    if (!text || text.length < LLM_CONFIG.minChars) return false;
+    if (heuristic.intent !== 'OTHER' && heuristic.intent_score >= 0.7) return false;
+    return true;
+}
+
+async function classifyIntentWithLLM(text, language) {
+    if (!LLM_CONFIG || !LLM_CONFIG.enabled) return null;
+    if (!LLM_BATCHER) return null;
+    return await LLM_BATCHER.enqueue({ text, language });
+}
+
+function mergeIntentResults(heuristic, llmResult) {
+    if (!llmResult) return heuristic;
+    if (heuristic.intent === 'OTHER') return llmResult;
+
+    if ((llmResult.intent_score || 0) > (heuristic.intent_score || 0) + 0.15) {
+        const mergedKeywords = new Set([...(heuristic.keywords || []), ...(llmResult.keywords || [])]);
+        return {
+            ...llmResult,
+            keywords: Array.from(mergedKeywords)
+        };
+    }
+
+    return heuristic;
+}
+
+function getFollowerBucketWeight(bucket) {
+    switch (bucket) {
+        case '<1k':
+            return 0.1;
+        case '1k-10k':
+            return 0.3;
+        case '10k-100k':
+            return 0.6;
+        case '100k+':
+            return 1.0;
+        case 'Nano (<1k)':
+            return 0.1;
+        case 'Micro (1k-10k)':
+            return 0.3;
+        case 'Mid-Tier (10k-100k)':
+            return 0.6;
+        case 'Macro (>100k)':
+            return 1.0;
+        default:
+            return 0.1;
+    }
+}
+
+function getAudienceTier(bucket) {
+    switch (bucket) {
+        case '<1k':
+            return 'low';
+        case '1k-10k':
+            return 'qualified';
+        case '10k-100k':
+        case '100k+':
+            return 'high_value';
+        default:
+            return 'low';
+    }
+}
+
+function buildAudienceQualification(followerCount, followerBucket) {
+    if (!followerBucket && typeof followerCount !== 'number') return null;
+    const bucket = followerBucket || bucketFollowerCount(followerCount);
+    return {
+        followers: Number.isFinite(followerCount) ? followerCount : null,
+        bucket,
+        tier: getAudienceTier(bucket)
+    };
+}
+
+function getEngagementProxy(commentLikeCount, followerCount) {
+    const likes = Number(commentLikeCount);
+    const followers = Number(followerCount);
+    if (!Number.isFinite(likes) || !Number.isFinite(followers) || followers <= 0) return null;
+    const ratio = likes / followers;
+    return Math.round(ratio * 100000) / 100000;
+}
+
+function getCommentLengthWeight(text) {
+    if (!text) return 0.1;
+    const length = text.trim().length;
+    if (length < 20) return 0.1;
+    if (length <= 100) return 0.5;
+    return 1.0;
+}
+
+function categorizeLeadScore(score) {
+    if (score >= 0.7) return 'HIGH';
+    if (score >= 0.4) return 'MEDIUM';
+    return 'LOW';
+}
+
+function meetsMinLeadScore(category, minCategory) {
+    const order = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+    const categoryRank = order[String(category || 'LOW').toUpperCase()] ?? 0;
+    const minRank = order[String(minCategory || 'LOW').toUpperCase()] ?? 0;
+    return categoryRank >= minRank;
+}
+
+function isLeadQualified(intentScore, followerBucket) {
+    const intent = Number(intentScore) || 0;
+    if (intent <= 0.5) return false;
+    if (!followerBucket) return false;
+    return followerBucket === '1k-10k' || followerBucket === '10k-100k' || followerBucket === '100k+';
+}
+
+function computeLeadScore(intentScore, followerBucket, commentText) {
+    const normalizedIntent = Math.max(0, Math.min(1, Number(intentScore) || 0));
+    const followerWeight = getFollowerBucketWeight(followerBucket);
+    const lengthWeight = getCommentLengthWeight(commentText);
+
+    const score = (normalizedIntent * 0.6) + (followerWeight * 0.2) + (lengthWeight * 0.2);
+    const rounded = Math.round(score * 1000) / 1000;
+
+    return {
+        score: rounded,
+        category: categorizeLeadScore(rounded)
+    };
+}
+
+function classifyLeadType(commentText, analysis) {
+    const text = String(commentText || '').toLowerCase();
+    if (SPAM_PATTERN.test(text)) return 'SPAM';
+
+    switch (analysis?.intent) {
+        case 'PURCHASE_INTENT':
+        case 'PRICE_INQUIRY':
+        case 'SERVICE_REQUEST':
+            return 'BUY_INTENT';
+        case 'QUESTION':
+            return 'QUESTION';
+        case 'INFLUENCER_INTEREST':
+            return 'INFLUENCER';
+        default:
+            return 'RANDOM';
+    }
+}
+
+async function analyzeComment(text) {
+    if (!text || typeof text !== 'string') return null;
+
+    const cached = getIntentCache(text);
+    if (cached) return cached;
+
+    const heuristic = classifyIntentHeuristic(text);
+    let finalResult = heuristic;
+
+    if (shouldUseLLMFallback(text, heuristic)) {
+        const llmResult = await classifyIntentWithLLM(text, heuristic.language);
+        if (llmResult) {
+            GLOBAL_STATS.llmClassifications += 1;
+        }
+        finalResult = mergeIntentResults(heuristic, llmResult);
+    }
+
+    const result = {
+        ...finalResult
+    };
+    setIntentCache(text, result);
+    return result;
+}
+
+function detectLanguage(text) {
+    if (/[??????]/i.test(text)) return 'tr';
+    return 'en';
+}
+
+
+function createLlmBatcher(config) {
+    if (!config || !config.enabled) return null;
+
+    const queue = [];
+    let flushTimer = null;
+    let activeBatches = 0;
+
+    const scheduleFlush = () => {
+        if (flushTimer) return;
+        flushTimer = setTimeout(() => {
+            flushTimer = null;
+            void flushQueue();
+        }, config.batchWaitMs);
+    };
+
+    const enqueue = ({ text, language }) => {
+        if (!config.enabled) return Promise.resolve(null);
+        if (LLM_STATE.requestsMade + LLM_STATE.pendingBatches >= config.maxRequests) {
+            return Promise.resolve(null);
+        }
+
+        return new Promise((resolve) => {
+            const id = typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : crypto.randomBytes(12).toString('hex');
+            queue.push({ id, text, language, resolve });
+            if (queue.length >= config.batchSize) {
+                void flushQueue();
+            } else {
+                scheduleFlush();
+            }
+        });
+    };
+
+    const flushQueue = async () => {
+        if (activeBatches >= config.maxParallel) return;
+        if (queue.length === 0) return;
+
+        const batch = queue.splice(0, config.batchSize);
+        activeBatches += 1;
+        LLM_STATE.pendingBatches += 1;
+
+        try {
+            await enforceLlmRateLimit(config);
+            LLM_STATE.requestsMade += 1;
+            LLM_STATE.lastRequestAt = Date.now();
+            const results = await sendLlmBatch(config, batch);
+            for (const item of batch) {
+                item.resolve(results[item.id] || null);
+            }
+        } catch (e) {
+            for (const item of batch) {
+                item.resolve(null);
+            }
+        } finally {
+            LLM_STATE.pendingBatches = Math.max(0, LLM_STATE.pendingBatches - 1);
+            activeBatches = Math.max(0, activeBatches - 1);
+            if (queue.length > 0) {
+                void flushQueue();
+            }
+        }
+    };
+
+    return { enqueue };
+}
+
+async function enforceLlmRateLimit(config) {
+    const now = Date.now();
+    const waitMs = Math.max(0, config.minIntervalMs - (now - LLM_STATE.lastRequestAt));
+    if (waitMs > 0) {
+        await new Promise(r => setTimeout(r, waitMs));
+    }
+}
+
+async function sendLlmBatch(config, batch) {
+    const inputMap = new Map(batch.map(item => [item.id, item]));
+    const items = batch.map(item => ({
+        id: item.id,
+        language: item.language || 'unknown',
+        text: item.text
+    }));
+
+    const prompt = {
+        model: config.model,
+        temperature: 0,
+        max_tokens: 250,
+        messages: [
+            {
+                role: 'system',
+                content: 'You are an intent classifier for Instagram comments. Return ONLY JSON array with items: {id, intent (PURCHASE_INTENT|QUESTION|PRICE_INQUIRY|SERVICE_REQUEST|INFLUENCER_INTEREST|OTHER), intent_score (0-1), keywords (array)}.'
+            },
+            {
+                role: 'user',
+                content: JSON.stringify(items)
+            }
+        ]
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+
+    try {
+        const response = await fetch(config.endpoint, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${config.apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(prompt),
+            signal: controller.signal
+        });
+
+        if (!response.ok) return {};
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text;
+        if (!content) return {};
+
+        const jsonStart = content.indexOf('[');
+        const jsonEnd = content.lastIndexOf(']');
+        if (jsonStart == -1 || jsonEnd == -1) return {};
+
+        const parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+        if (!Array.isArray(parsed)) return {};
+
+        const results = {};
+        for (const item of parsed) {
+            if (!item || typeof item.id !== 'string' || typeof item.intent !== 'string') continue;
+            const intent = item.intent.toUpperCase();
+            if (!INTENT_BASE_SCORES[intent] && intent !== 'OTHER') continue;
+
+            const intentScore = Math.max(0, Math.min(1, Number(item.intent_score) || 0));
+            const keywords = Array.isArray(item.keywords) ? item.keywords.map(k => String(k).trim()).filter(Boolean) : [];
+            const sourceText = inputMap.get(item.id)?.text || '';
+            results[item.id] = {
+                intent,
+                score: INTENT_BASE_SCORES[intent] || 0,
+                intent_score: intentScore,
+                keywords,
+                confidence: intentScore,
+                source: 'llm',
+                language: detectLanguage(sourceText)
+            };
+        }
+        return results;
+    } catch (e) {
+        return {};
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function updateGlobalStats(analysis, leadCategory) {
     GLOBAL_STATS.totalComments += 1;
-    if (analysis.isLead) GLOBAL_STATS.totalLeads += 1;
+    if (leadCategory === 'HIGH') GLOBAL_STATS.totalLeads += 1;
 
     const intentKey = analysis.intent || 'OTHER';
     GLOBAL_STATS.intentBreakdown[intentKey] = (GLOBAL_STATS.intentBreakdown[intentKey] || 0) + 1;
@@ -557,7 +1081,10 @@ async function generateSummary() {
         totalComments: GLOBAL_STATS.totalComments,
         totalLeads: GLOBAL_STATS.totalLeads,
         intentBreakdown: GLOBAL_STATS.intentBreakdown,
-        topKeywords
+        topKeywords,
+        filteredComments: GLOBAL_STATS.filteredComments,
+        duplicateComments: GLOBAL_STATS.duplicateComments,
+        llmClassifications: GLOBAL_STATS.llmClassifications
     };
 
     const kv = await KeyValueStore.open();
@@ -583,6 +1110,7 @@ function validateInput(input) {
         sessionId: extractSessionId(input),
         scrapeSince: parseScrapeSince(input.scrapeSince),
         enrichLeads: Boolean(input.enrichLeads),
+        minLeadScore: normalizeMinLeadScore(input.minLeadScore),
         maxComments: input.maxComments || DEFAULT_MAX_COMMENTS,
         maxPostsPerProfile: input.maxPostsPerProfile || DEFAULT_MAX_POSTS,
         proxyConfiguration: input.proxyConfiguration || {},
@@ -696,4 +1224,68 @@ function extractSessionIdFromString(value) {
     if (looksLikeCookieHeader) return null;
 
     return trimmed;
+}
+
+async function processComments(items, concurrency, handler) {
+    const pending = new Set();
+    for (const item of items) {
+        const task = handler(item);
+        pending.add(task);
+        task.finally(() => pending.delete(task));
+        if (pending.size >= concurrency) {
+            await Promise.race(pending);
+        }
+    }
+    await Promise.all(pending);
+}
+
+function normalizeMinLeadScore(value) {
+    const normalized = String(value || 'LOW').toUpperCase();
+    if (normalized === 'HIGH' || normalized === 'MEDIUM' || normalized === 'LOW') return normalized;
+    return 'LOW';
+}
+
+function getEnrichmentCache(username) {
+    if (!username) return null;
+    const entry = ENRICHMENT_CACHE.get(username);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > ENRICHMENT_CACHE_TTL_MS) {
+        ENRICHMENT_CACHE.delete(username);
+        return null;
+    }
+    return entry.value;
+}
+
+function setEnrichmentCache(username, payload) {
+    if (!username) return;
+    ENRICHMENT_CACHE.set(username, { value: payload, ts: Date.now() });
+    if (ENRICHMENT_CACHE.size > ENRICHMENT_CACHE_MAX) {
+        ENRICHMENT_CACHE.clear();
+    }
+}
+
+function getIntentCache(text) {
+    if (!text) return null;
+    const key = getIntentCacheKey(text);
+    const entry = INTENT_CACHE.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > INTENT_CACHE_TTL_MS) {
+        INTENT_CACHE.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+function setIntentCache(text, payload) {
+    if (!text) return;
+    const key = getIntentCacheKey(text);
+    INTENT_CACHE.set(key, { value: payload, ts: Date.now() });
+    if (INTENT_CACHE.size > INTENT_CACHE_MAX) {
+        INTENT_CACHE.clear();
+    }
+}
+
+function getIntentCacheKey(text) {
+    const normalized = String(text).trim().toLowerCase().replace(/\s+/g, ' ');
+    return crypto.createHash('sha1').update(normalized).digest('hex');
 }
