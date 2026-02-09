@@ -57,6 +57,7 @@
         "proxyConfiguration": {
             "title": "Proxy Configuration",
             "type": "object",
+            "description": "Apify proxy settings. Leave default to use Apify Proxy.",
             "editor": "proxy",
             "default": {
                 "useApifyProxy": true
