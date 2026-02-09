@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Actor } from 'apify';
-import { log } from 'crawlee';
+import { log, PlaywrightCrawler } from 'crawlee';
 import type { NormalizedInput } from './types/Input.js';
 import { INPUT_DEFAULTS, INPUT_CONSTRAINTS } from './types/Input.js';
 
@@ -267,7 +267,139 @@ function resolveNum(
 async function processLeads(input: NormalizedInput): Promise<void> {
   log.info('Lead pipeline started', { urlCount: input.postUrls.length });
 
-  // TODO: integrate PlaywrightCrawler + scoring pipeline
+  const requestQueue = await Actor.openRequestQueue();
+
+  let totalComments = 0;
+  let totalLeads = 0;
+  let targetReached = false;
+  let status: 'success' | 'failed' = 'success';
+  let failureReason: string | undefined;
+
+  let crawler: PlaywrightCrawler | null = null;
+  const queuedUrls: string[] = [];
+
+  try {
+    for (const url of input.postUrls) {
+      await requestQueue.addRequest({ url, label: 'POST' });
+      queuedUrls.push(url);
+      log.info('Queued URL', { url });
+    }
+
+    if (queuedUrls.length === 0) {
+      throw new Error('NO_URLS_QUEUED: Input postUrls resolved to an empty queue.');
+    }
+
+    crawler = new PlaywrightCrawler({
+      requestQueue,
+      maxConcurrency: 2,
+      requestHandlerTimeoutSecs: 60,
+      requestHandler: async ({ page, request }) => {
+        if (targetReached) return;
+
+        await page.goto(request.url, { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(1500);
+
+        const comments = await page.evaluate(() => {
+          const items = Array.from(document.querySelectorAll('ul ul li'));
+          return items
+            .map((item) => {
+              const userAnchor = item.querySelector<HTMLAnchorElement>('a[href^=\"/\"]');
+              const textSpan = item.querySelector<HTMLSpanElement>('span');
+              const username = userAnchor?.textContent?.trim() ?? '';
+              const text = textSpan?.textContent?.trim() ?? '';
+              if (!username || !text) return null;
+              return { username, text };
+            })
+            .filter((entry): entry is { username: string; text: string } => Boolean(entry));
+        });
+
+        const limitedComments = comments.slice(0, input.maxCommentsPerPost);
+        totalComments += limitedComments.length;
+
+        log.info('Comments scraped', {
+          url: request.url,
+          count: limitedComments.length,
+          totalComments,
+        });
+
+        for (const comment of limitedComments) {
+          if (targetReached) break;
+
+          const score = scoreLead(comment.text);
+          if (score < input.minLeadScore) continue;
+
+          totalLeads += 1;
+          const lead = {
+            type: 'lead',
+            url: request.url,
+            username: comment.username,
+            text: comment.text,
+            score,
+          };
+          await Actor.pushData(lead);
+
+          if (totalLeads >= input.targetLeads) {
+            targetReached = true;
+            crawler?.autoscaledPool?.abort();
+            log.info('Target leads reached', { totalLeads });
+          }
+        }
+      },
+    });
+
+    if (!crawler) {
+      throw new Error('CRAWLER_NOT_INITIALIZED: Expected a PlaywrightCrawler instance.');
+    }
+
+    await crawler.run();
+
+    log.info('Lead generation complete', {
+      queuedUrls: queuedUrls.length,
+      totalComments,
+      totalLeads,
+    });
+  } catch (err: unknown) {
+    status = 'failed';
+    failureReason = err instanceof Error ? err.message : String(err);
+    throw err;
+  } finally {
+    await Actor.pushData({
+      type: 'summary',
+      status,
+      failureReason,
+      queuedUrls: queuedUrls.length,
+      totalComments,
+      totalLeads,
+      targetLeads: input.targetLeads,
+      minLeadScore: input.minLeadScore,
+      completedAt: new Date().toISOString(),
+    });
+  }
+}
+
+function scoreLead(text: string): number {
+  const normalized = text.toLowerCase();
+  const keywords = [
+    'price',
+    'cost',
+    'how much',
+    'interested',
+    'buy',
+    'order',
+    'details',
+    'info',
+    'dm',
+    'message',
+    'ship',
+  ];
+  let hits = 0;
+  for (const keyword of keywords) {
+    if (normalized.includes(keyword)) hits += 1;
+  }
+  if (hits === 0) return 0.1;
+  if (hits === 1) return 0.45;
+  if (hits === 2) return 0.65;
+  return 0.85;
 }
 
 // ── bootstrap ────────────────────────────────────────────────────────────
