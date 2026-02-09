@@ -67,8 +67,6 @@
                             "comment",
                             "contactInfo"
                         ],
-                        "unwind": [],
-                        "flatten": [],
                         "limit": 100,
                         "desc": true,
                         "sort": [
