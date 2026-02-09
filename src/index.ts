@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Actor } from 'apify';
-import { log, PlaywrightCrawler } from 'crawlee';
+import { HttpCrawler, log } from 'crawlee';
 import type { NormalizedInput } from './types/Input.js';
 import { INPUT_DEFAULTS, INPUT_CONSTRAINTS } from './types/Input.js';
 
@@ -275,52 +275,52 @@ async function processLeads(input: NormalizedInput): Promise<void> {
   let status: 'success' | 'failed' = 'success';
   let failureReason: string | undefined;
 
-  let crawler: PlaywrightCrawler | null = null;
+  let crawler: HttpCrawler | null = null;
   const queuedUrls: string[] = [];
+  const perPostMeta: Array<Record<string, unknown>> = [];
 
   try {
     for (const url of input.postUrls) {
-      await requestQueue.addRequest({ url, label: 'POST' });
-      queuedUrls.push(url);
-      log.info('Queued URL', { url });
+      const apiUrl = toInstagramApiUrl(url);
+      await requestQueue.addRequest({ url: apiUrl, label: 'POST_API', userData: { sourceUrl: url } });
+      queuedUrls.push(apiUrl);
+      log.info('Queued URL', { url: apiUrl, sourceUrl: url });
     }
 
     if (queuedUrls.length === 0) {
       throw new Error('NO_URLS_QUEUED: Input postUrls resolved to an empty queue.');
     }
 
-    crawler = new PlaywrightCrawler({
+    crawler = new HttpCrawler({
       requestQueue,
-      maxConcurrency: 2,
+      maxConcurrency: 4,
       requestHandlerTimeoutSecs: 60,
-      requestHandler: async ({ page, request }) => {
+      requestHandler: async ({ request, body, contentType }) => {
         if (targetReached) return;
 
-        await page.goto(request.url, { waitUntil: 'domcontentloaded' });
-        await page.waitForTimeout(1500);
-
-        const comments = await page.evaluate(() => {
-          const items = Array.from(document.querySelectorAll('ul ul li'));
-          return items
-            .map((item) => {
-              const userAnchor = item.querySelector<HTMLAnchorElement>('a[href^=\"/\"]');
-              const textSpan = item.querySelector<HTMLSpanElement>('span');
-              const username = userAnchor?.textContent?.trim() ?? '';
-              const text = textSpan?.textContent?.trim() ?? '';
-              if (!username || !text) return null;
-              return { username, text };
-            })
-            .filter((entry): entry is { username: string; text: string } => Boolean(entry));
-        });
+        const rawBody = typeof body === 'string' ? body : body.toString();
+        const { post, comments } = extractInstagramData(rawBody, contentType);
+        const sourceUrl = (request.userData?.sourceUrl as string | undefined) ?? request.url;
 
         const limitedComments = comments.slice(0, input.maxCommentsPerPost);
         totalComments += limitedComments.length;
 
         log.info('Comments scraped', {
-          url: request.url,
+          url: sourceUrl,
           count: limitedComments.length,
           totalComments,
         });
+
+        if (post) {
+          const postRecord = {
+            type: 'post',
+            url: sourceUrl,
+            ...post,
+            commentCount: limitedComments.length,
+          };
+          perPostMeta.push(postRecord);
+          await Actor.pushData(postRecord);
+        }
 
         for (const comment of limitedComments) {
           if (targetReached) break;
@@ -331,7 +331,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           totalLeads += 1;
           const lead = {
             type: 'lead',
-            url: request.url,
+            url: sourceUrl,
             username: comment.username,
             text: comment.text,
             score,
@@ -348,7 +348,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
     });
 
     if (!crawler) {
-      throw new Error('CRAWLER_NOT_INITIALIZED: Expected a PlaywrightCrawler instance.');
+      throw new Error('CRAWLER_NOT_INITIALIZED: Expected a HttpCrawler instance.');
     }
 
     await crawler.run();
@@ -370,6 +370,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
       queuedUrls: queuedUrls.length,
       totalComments,
       totalLeads,
+      postsProcessed: perPostMeta.length,
       targetLeads: input.targetLeads,
       minLeadScore: input.minLeadScore,
       completedAt: new Date().toISOString(),
@@ -400,6 +401,108 @@ function scoreLead(text: string): number {
   if (hits === 1) return 0.45;
   if (hits === 2) return 0.65;
   return 0.85;
+}
+
+function toInstagramApiUrl(url: string): string {
+  const trimmed = url.split('?')[0];
+  if (trimmed.endsWith('/')) {
+    return `${trimmed}?__a=1&__d=dis`;
+  }
+  return `${trimmed}/?__a=1&__d=dis`;
+}
+
+function extractInstagramData(
+  body: string,
+  contentType?: string,
+): { post?: Record<string, unknown>; comments: Array<{ username: string; text: string }> } {
+  const normalizedType = contentType?.toLowerCase() ?? '';
+  if (normalizedType.includes('application/json') || normalizedType.includes('text/json')) {
+    const parsed = safeJsonParse(body);
+    return parsed ? parseInstagramJson(parsed) : { comments: [] };
+  }
+
+  const json = extractEmbeddedJson(body);
+  if (json) return parseInstagramJson(json);
+
+  return { comments: [] };
+}
+
+function safeJsonParse(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function extractEmbeddedJson(body: string): unknown | null {
+  const sharedDataMatch = body.match(/window\._sharedData\s*=\s*(\{[\s\S]*?\});/);
+  if (sharedDataMatch?.[1]) {
+    return safeJsonParse(sharedDataMatch[1]);
+  }
+
+  const nextDataMatch = body.match(
+    /<script type="application\/json" id="__NEXT_DATA__">([\s\S]*?)<\/script>/,
+  );
+  if (nextDataMatch?.[1]) {
+    return safeJsonParse(nextDataMatch[1]);
+  }
+
+  const additionalDataMatch = body.match(
+    /window\.__additionalDataLoaded\([^,]+,\s*([\s\S]*?)\);/,
+  );
+  if (additionalDataMatch?.[1]) {
+    return safeJsonParse(additionalDataMatch[1]);
+  }
+
+  return null;
+}
+
+function parseInstagramJson(
+  data: unknown,
+): { post?: Record<string, unknown>; comments: Array<{ username: string; text: string }> } {
+  const comments: Array<{ username: string; text: string }> = [];
+
+  const media =
+    (data as any)?.graphql?.shortcode_media ??
+    (data as any)?.data?.shortcode_media ??
+    (data as any)?.items?.[0] ??
+    (data as any)?.props?.pageProps?.shortcode_media ??
+    (data as any)?.entry_data?.PostPage?.[0]?.graphql?.shortcode_media ??
+    (data as any)?.entry_data?.PostPage?.[0]?.items?.[0];
+
+  if (!media) {
+    return { comments };
+  }
+
+  const post: Record<string, unknown> = {
+    id: media.id ?? null,
+    shortcode: media.shortcode ?? null,
+    caption:
+      media?.edge_media_to_caption?.edges?.[0]?.node?.text ??
+      media?.caption?.text ??
+      null,
+    likeCount:
+      media?.edge_media_preview_like?.count ??
+      media?.like_count ??
+      null,
+    commentCount:
+      media?.edge_media_to_parent_comment?.count ??
+      media?.comment_count ??
+      null,
+    timestamp: media?.taken_at_timestamp ?? media?.taken_at ?? null,
+    ownerUsername: media?.owner?.username ?? media?.user?.username ?? null,
+  };
+
+  const edges = media?.edge_media_to_parent_comment?.edges ?? media?.comments ?? [];
+  for (const edge of edges) {
+    const node = edge?.node ?? edge;
+    const username = node?.owner?.username ?? node?.user?.username ?? '';
+    const text = node?.text ?? '';
+    if (username && text) comments.push({ username, text });
+  }
+
+  return { post, comments };
 }
 
 // ── bootstrap ────────────────────────────────────────────────────────────
