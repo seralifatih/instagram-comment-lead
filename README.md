@@ -10,8 +10,10 @@ AI-powered Instagram comment intelligence. This actor scrapes comments from Inst
 - Lead scoring (`LOW` / `MEDIUM` / `HIGH`).
 - Optional audience enrichment with follower bucket and tier.
 - Lead type classification and commercial value scoring.
+- Promoter spam detection.
 - Webhook notifications for high-intent leads.
 - Output filtering via `minLeadScore`.
+- Intent groups: `BUY_INTENT`, `QUESTION`, `COMPLAINT`, `PROMOTER_SPAM`, `RANDOM`.
 
 ## Input
 Example:
@@ -22,11 +24,28 @@ Example:
     "https://www.instagram.com/nike/"
   ],
   "sessionId": "YOUR_INSTAGRAM_SESSION_ID",
-  "maxComments": 200,
+  "maxComments": 1000,
+  "maxPages": 10,
+  "samplingMode": "ALL",
+  "samplingProbability": 0.3,
+  "minLikes": 5,
+  "targetLeadCount": 50,
+  "userDefinedLimitMB": 50,
   "maxPostsPerProfile": 3,
   "scrapeSince": "2025-01-01",
   "enrichLeads": true,
   "minLeadScore": "MEDIUM",
+  "intentWeights": {
+    "BUY_INTENT": {
+      "buy": 0.9,
+      "order": 0.7
+    }
+  },
+  "languageDetection": {
+    "enableFastText": false,
+    "fastTextMinChars": 20,
+    "fastTextTimeoutMs": 2000
+  },
   "webhookUrl": "https://example.com/webhook"
 }
 ```
@@ -35,9 +54,17 @@ Input fields:
 - `targetUrls` (required): Post or profile URLs.
 - `sessionId` (required): Instagram `sessionid` cookie value.
 - `sessionCookie` (optional): Full browser cookie string (must include `sessionid=...`).
-- `maxComments` (default 100): Max comments per post.
+- `maxComments` (default 1000): Max comments per post.
+- `maxPages` (optional): Maximum number of comment pages to paginate.
+- `samplingMode` (default ALL): `ALL`, `RANDOM`, or `TOP_LIKED`.
+- `samplingProbability` (default 0.3): For `RANDOM`, skip a page with this probability.
+- `minLikes` (default 5): For `TOP_LIKED`, only process comments with at least this many likes.
+- `targetLeadCount` (default 50): Stop when HIGH intent leads reach this count.
+- `userDefinedLimitMB` (optional): Abort when estimated dataset size exceeds this limit.
 - `scrapeSince` (optional): Only process comments after this date (YYYY-MM-DD or ISO).
 - `enrichLeads` (default false): Enrich lead comments with follower data.
+- `intentWeights` (optional): Override intent keyword weights with a JSON dictionary.
+- `languageDetection` (optional): Language detection settings (FastText fallback is optional).
 - `maxPostsPerProfile` (default 3): Posts per profile when a profile URL is provided.
 - `minLeadScore` (default LOW): Filter output by `LOW`, `MEDIUM`, or `HIGH`.
 - `webhookUrl` (optional): Send payloads when `leadScore` is `HIGH` and `intent_score > 0.7`.
@@ -52,8 +79,10 @@ Each dataset item has the following shape:
   "source_shortcode": "Cush2lzNPk",
   "username": "customer_john",
   "text": "Price? Do you ship?",
-  "intent": "PRICE_INQUIRY",
+  "intent": "BUY_INTENT",
   "intent_score": 0.84,
+  "detected_language": "en",
+  "user_comment_count": 2,
   "is_lead": true,
   "keywords": ["price", "ship"],
   "leadScore": "HIGH",
@@ -62,7 +91,7 @@ Each dataset item has the following shape:
   "audience_qualification": {
     "followers": 4200,
     "bucket": "1k-10k",
-    "tier": "qualified"
+    "tier": "MID_VALUE_AUDIENCE"
   },
   "profileUrl": "https://www.instagram.com/customer_john/",
   "likeCount": 3,
@@ -72,7 +101,7 @@ Each dataset item has the following shape:
 ```
 
 Lead rule:
-- `is_lead = true` when `intent_score > 0.5` AND follower bucket is at least `1k-10k`.
+- `is_lead = true` when `leadScore` is `MEDIUM` or `HIGH`. `LOW` is not a lead.
 
 Webhook rule:
 - Notifications fire only when `leadScore` is `HIGH` and `intent_score > 0.7`.
@@ -104,6 +133,14 @@ Fetch analytics:
 ```bash
 curl "https://api.apify.com/v2/key-value-stores/<STORE_ID>/records/OUTPUT_ANALYTICS"
 ```
+
+Analytics payload includes:
+- `stats.total_comments`
+- `stats.leads_count`
+- `stats.high_intent_leads`
+- `stats.high_value_leads`
+- `stats.intent_distribution`
+- `stats.top_keywords`
 
 ## LLM Fallback (Optional)
 Set env vars to enable LLM classification:

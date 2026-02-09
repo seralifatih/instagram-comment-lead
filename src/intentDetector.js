@@ -7,6 +7,29 @@
     'where to buy': 0.75,
     'need this': 0.5,
     'interested': 0.5,
+    'fiyat': 0.6,
+    'ne kadar': 0.7,
+    'satın al': 0.7,
+    'satin al': 0.7,
+    'sipariş': 0.6,
+    'siparis': 0.6,
+    'kargo': 0.5,
+    'stok': 0.4,
+    'precio': 0.6,
+    'comprar': 0.7,
+    'compra': 0.6,
+    'cuanto': 0.6,
+    'cuánto': 0.6,
+    'pedido': 0.6,
+    'envio': 0.5,
+    'envío': 0.5,
+    'कीमत': 0.6,
+    'दाम': 0.6,
+    'कितना': 0.6,
+    'खरीद': 0.6,
+    'खरीदना': 0.7,
+    'ऑर्डर': 0.6,
+    'डिलीवरी': 0.5,
     'order': 0.6,
     'in stock': 0.5,
     'available': 0.5,
@@ -22,6 +45,14 @@ function normalizeText(text) {
 
 function parseCustomWeights(customWeights) {
     if (customWeights && typeof customWeights === 'object') return customWeights;
+    if (typeof customWeights === 'string') {
+        try {
+            const parsed = JSON.parse(customWeights);
+            if (parsed && typeof parsed === 'object') return parsed;
+        } catch {
+            return null;
+        }
+    }
     try {
         const raw = process.env.LEAD_INTENT_WEIGHTS;
         if (!raw) return null;

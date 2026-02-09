@@ -52,13 +52,21 @@
             },
             "intent": {
                 "type": "string",
-                "description": "Detected intent category."
+                "description": "Detected intent category (BUY_INTENT, QUESTION, COMPLAINT, PROMOTER_SPAM, RANDOM)."
             },
             "intent_score": {
                 "type": "number",
                 "description": "Intent score (0-1).",
                 "minimum": 0,
                 "maximum": 1
+            },
+            "detected_language": {
+                "type": "string",
+                "description": "Detected language ISO code."
+            },
+            "user_comment_count": {
+                "type": "integer",
+                "description": "Number of comments by the same username observed during this run."
             },
             "keywords": {
                 "type": "array",
@@ -94,9 +102,9 @@
                             "null"
                         ],
                         "enum": [
-                            "low",
-                            "qualified",
-                            "high_value",
+                            "LOW_VALUE_AUDIENCE",
+                            "MID_VALUE_AUDIENCE",
+                            "HIGH_VALUE_AUDIENCE",
                             null
                         ],
                         "description": "Audience tier."
@@ -116,6 +124,7 @@
                     "QUESTION",
                     "INFLUENCER",
                     "SPAM",
+                    "PROMOTER_SPAM",
                     "RANDOM"
                 ],
                 "description": "Lead type classification."
@@ -140,6 +149,8 @@
                     "text",
                     "intent",
                     "intent_score",
+                    "detected_language",
+                    "user_comment_count",
                     "is_lead",
                     "keywords",
                     "leadScore",
@@ -177,6 +188,14 @@
                     },
                     "intent_score": {
                         "label": "Intent Score",
+                        "format": "number"
+                    },
+                    "detected_language": {
+                        "label": "Language",
+                        "format": "text"
+                    },
+                    "user_comment_count": {
+                        "label": "User Comment Count",
                         "format": "number"
                     },
                     "is_lead": {

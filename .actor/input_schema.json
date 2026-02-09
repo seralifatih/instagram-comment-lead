@@ -32,7 +32,53 @@
             "title": "Max Comments Per Post",
             "type": "integer",
             "description": "Limit the depth of scraping to save costs.",
-            "default": 100,
+            "default": 1000,
+            "minimum": 1
+        },
+        "maxPages": {
+            "title": "Max Comment Pages (Optional)",
+            "type": "integer",
+            "description": "Maximum number of comment pages to paginate through. Leave empty for all pages.",
+            "minimum": 1
+        },
+        "samplingMode": {
+            "title": "Sampling Mode",
+            "type": "string",
+            "description": "Choose how to sample comments.",
+            "editor": "select",
+            "default": "ALL",
+            "enum": [
+                "ALL",
+                "RANDOM",
+                "TOP_LIKED"
+            ]
+        },
+        "samplingProbability": {
+            "title": "Sampling Probability",
+            "type": "number",
+            "description": "For RANDOM mode: probability to skip a page (0-1).",
+            "default": 0.3,
+            "minimum": 0,
+            "maximum": 1
+        },
+        "minLikes": {
+            "title": "Minimum Likes (TOP_LIKED)",
+            "type": "integer",
+            "description": "For TOP_LIKED mode: minimum likes required for a comment to be processed.",
+            "default": 5,
+            "minimum": 0
+        },
+        "targetLeadCount": {
+            "title": "Target High-Intent Lead Count",
+            "type": "integer",
+            "description": "Stop scraping when HIGH intent leads reach this number.",
+            "default": 50,
+            "minimum": 1
+        },
+        "userDefinedLimitMB": {
+            "title": "Max Dataset Size (MB)",
+            "type": "number",
+            "description": "Abort if estimated dataset size exceeds this limit.",
             "minimum": 1
         },
         "scrapeSince": {
@@ -47,6 +93,43 @@
             "type": "boolean",
             "description": "If enabled, the actor will visit lead profiles to obtain follower buckets and tiers.",
             "default": false
+        },
+        "intentWeights": {
+            "title": "Intent Weights Override (Optional)",
+            "type": "object",
+            "description": "JSON dictionary to override intent keyword weights. Example: {\"BUY_INTENT\": {\"buy\": 0.9, \"order\": 0.7}}",
+            "editor": "json"
+        },
+        "languageDetection": {
+            "title": "Language Detection (Optional)",
+            "type": "object",
+            "description": "Lightweight language detection settings. Enable FastText only if FASTTEXT_BIN and FASTTEXT_MODEL are available.",
+            "editor": "json",
+            "default": {
+                "enableFastText": false,
+                "fastTextMinChars": 20,
+                "fastTextTimeoutMs": 2000
+            },
+            "properties": {
+                "enableFastText": {
+                    "title": "Enable FastText",
+                    "type": "boolean",
+                    "description": "Use fastText CLI as a fallback (requires FASTTEXT_BIN and FASTTEXT_MODEL).",
+                    "default": false
+                },
+                "fastTextMinChars": {
+                    "title": "FastText Min Chars",
+                    "type": "integer",
+                    "description": "Minimum characters required to call FastText.",
+                    "minimum": 0
+                },
+                "fastTextTimeoutMs": {
+                    "title": "FastText Timeout (ms)",
+                    "type": "integer",
+                    "description": "Timeout for the FastText process in milliseconds.",
+                    "minimum": 0
+                }
+            }
         },
         "maxPostsPerProfile": {
             "title": "Max Posts Per Profile",
