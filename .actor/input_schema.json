@@ -281,10 +281,9 @@
         "openaiApiKey": {
             "title": "OpenAI API Key",
             "type": "string",
-            "description": "Your OpenAI API key for AI-powered lead analysis. Get one at https://platform.openai.com/api-keys. Required for lead scoring and intent detection.",
+            "description": "Your OpenAI API key for AI-powered lead analysis. Get one at https://platform.openai.com/api-keys. Required for lead scoring and intent detection. Must start with 'sk-'.",
             "editor": "textfield",
             "isSecret": true,
-            "pattern": "^sk-[A-Za-z0-9_-]+$",
             "example": "sk-proj-..."
         },
         "openaiModel": {
