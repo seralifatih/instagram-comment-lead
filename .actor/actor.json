@@ -1,0 +1,13 @@
+﻿{
+    "actorSpecification": 1,
+    "name": "instagram-comment-lead-intelligence",
+    "title": "Instagram Comment Lead Intelligence",
+    "description": "Advanced Instagram comment scraper with Lead Scoring, Intent Analysis, and Audience Qualification.",
+    "version": "2.0.0",
+    "buildTag": "latest",
+    "input": "./input_schema.json",
+    "output": "./output_schema.json",
+    "storages": {
+        "dataset": "./dataset_schema.json"
+    }
+}

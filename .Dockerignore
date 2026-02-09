@@ -1,0 +1,29 @@
+Do not copy node_modules (install them inside the image instead)
+
+node_modules/
+
+Do not copy git history
+
+.git/
+.gitignore
+
+Do not copy local storage/data
+
+storage/
+apify_storage/
+
+Do not copy documentation or docker files into the runtime
+
+Dockerfile
+README.md
+.dockerignore
+input_schema.json
+
+Do not copy IDE settings
+
+.vscode/
+.idea/
+
+Do not copy secrets
+
+.env

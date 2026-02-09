@@ -1,0 +1,13 @@
+﻿{
+    "actorOutputSchemaVersion": 1,
+    "title": "Instagram Comment Lead Intelligence Output",
+    "description": "Results are stored in the default dataset.",
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "string",
+            "title": "Results",
+            "template": "{{links.apiDefaultDatasetUrl}}/items"
+        }
+    }
+}

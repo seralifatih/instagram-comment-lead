@@ -1,0 +1,22 @@
+{
+    "name": "instagram-comment-lead-intelligence",
+    "version": "2.0.0",
+    "description": "Advanced Instagram comment scraper with Lead Scoring, Intent Analysis, and Audience Qualification.",
+    "type": "module",
+    "main": "src/main.js",
+    "scripts": {
+        "start": "node src/main.js",
+        "test": "echo \"No tests yet\""
+    },
+    "dependencies": {
+        "apify": "^3.1.0",
+        "crawlee": "^3.5.0",
+        "playwright": "^1.40.0",
+        "natural": "^6.10.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "author": "Apify Developer",
+    "license": "UNLICENSED"
+}

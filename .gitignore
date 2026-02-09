@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Apify Local Storage (Lokal test verileri git'e gitmemeli)
+storage/
+apify_storage/
+
+# Environment Variables (Güvenlik için kritik!)
+.env
+.env.local
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
