@@ -65,17 +65,5 @@
     },
     "required": [
         "targetUrls"
-    ],
-    "anyOf": [
-        {
-            "required": [
-                "sessionId"
-            ]
-        },
-        {
-            "required": [
-                "sessionCookie"
-            ]
-        }
     ]
 }
