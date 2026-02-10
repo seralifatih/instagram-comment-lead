@@ -34,9 +34,11 @@ import {
   toInstagramApiUrl as toInstagramApiUrlImpl,
 } from './extraction/InstagramApi.js';
 import { scoreLead as scoreLeadImpl } from './intelligence/LeadScorer.js';
+import { buildLead } from './intelligence/LeadEnricher.js';
 import { scoreSentiment } from './intelligence/SentimentScorer.js';
 import { buildSummary, type LeadRecord } from './intelligence/AnalyticsAggregator.js';
 import { createCrawler } from './core/CrawlerFactory.js';
+import type { Lead } from './types/Lead.js';
 
 // ── structured pre-init logger ───────────────────────────────────────────
 
@@ -95,22 +97,6 @@ emit('INFO', 'Boot', {
   cwd: process.cwd(),
 });
 
-// ── commercial score helper ──────────────────────────────────────────────
-// Combines lead intent score with sentiment alignment.
-// Positive sentiment on a high-intent comment → elevated commercial value.
-// Negative sentiment → suppressed (complaints rarely convert).
-
-function computeCommercialScore(
-  intentScore: number,
-  sentimentScore: number,
-  sentiment: 'positive' | 'negative' | 'neutral',
-): number {
-  const base = intentScore;
-  let modifier = 0;
-  if (sentiment === 'positive') modifier = +0.1 * sentimentScore;
-  else if (sentiment === 'negative') modifier = -0.15 * sentimentScore;
-  return parseFloat(Math.min(1, Math.max(0, base + modifier)).toFixed(3));
-}
 
 // ── main ─────────────────────────────────────────────────────────────────
 
@@ -118,7 +104,7 @@ async function main(): Promise<{
   postsProcessed: number;
   totalComments: number;
   totalLeads: number;
-  leads: EnrichedLead[];
+  leads: Lead[];
 }> {
   const raw: unknown = await Actor.getInput();
   const input = validateInput(raw);
@@ -183,23 +169,6 @@ async function main(): Promise<{
 
 // ── enriched lead type ────────────────────────────────────────────────────
 
-type EnrichedLead = {
-  type: 'lead';
-  url: string;
-  username: string;
-  text: string;
-  // intent
-  score: number;
-  intent: string;
-  matched_keywords: string[];
-  // sentiment
-  sentiment: 'positive' | 'negative' | 'neutral';
-  sentiment_score: number;
-  positive_signals: string[];
-  negative_signals: string[];
-  // derived
-  commercial_score: number;
-};
 
 // ── business logic ────────────────────────────────────────────────────────
 
@@ -209,7 +178,7 @@ async function processLeads(input: NormalizedInput): Promise<{
   totalComments: number;
   totalLeads: number;
   comments: Array<{ url: string; username: string; text: string }>;
-  leads: EnrichedLead[];
+  leads: Lead[];
 }> {
   log.info('Lead pipeline started', { urlCount: input.postUrls.length });
 
@@ -228,10 +197,11 @@ async function processLeads(input: NormalizedInput): Promise<{
   const queuedUrls: string[] = [];
   const perPostMeta: Array<Record<string, unknown>> = [];
   const allComments: Array<{ url: string; username: string; text: string }> = [];
-  const allLeads: EnrichedLead[] = [];
+  const allLeads: Lead[] = [];
 
   // Collect ALL scored records (not just qualifying leads) for analytics
   const allScoredRecords: LeadRecord[] = [];
+  const qualifiedLeadRecords: LeadRecord[] = [];
 
   let finalResult: {
     postUrls: string[];
@@ -239,7 +209,7 @@ async function processLeads(input: NormalizedInput): Promise<{
     totalComments: number;
     totalLeads: number;
     comments: Array<{ url: string; username: string; text: string }>;
-    leads: EnrichedLead[];
+    leads: Lead[];
   } = {
     postUrls: input.postUrls,
     postsProcessed: 0,
@@ -391,13 +361,6 @@ async function processLeads(input: NormalizedInput): Promise<{
           // ── score sentiment (always, for analytics coverage) ─────────
           const sentimentResult = scoreSentiment(comment.text);
 
-          // ── compute commercial score ──────────────────────────────────
-          const commercial_score = computeCommercialScore(
-            scored.score,
-            sentimentResult.sentiment_score,
-            sentimentResult.sentiment,
-          );
-
           // Accumulate every record for analytics regardless of score gate
           allScoredRecords.push({
             url: sourceUrl,
@@ -410,27 +373,30 @@ async function processLeads(input: NormalizedInput): Promise<{
             sentiment_score: sentimentResult.sentiment_score,
           });
 
+          if (scored.score >= input.minLeadScore) {
+            qualifiedLeadRecords.push({
+              url: sourceUrl,
+              username: comment.username,
+              text: comment.text,
+              score: scored.score,
+              intent: scored.intent,
+              matched_keywords: scored.matched_keywords,
+              sentiment: sentimentResult.sentiment,
+              sentiment_score: sentimentResult.sentiment_score,
+            });
+          }
+
           if (scored.score < input.minLeadScore) continue;
 
           totalLeads += 1;
 
-          const lead: EnrichedLead = {
-            type: 'lead',
-            url: sourceUrl,
+          const lead: Lead = buildLead({
             username: comment.username,
             text: comment.text,
-            // intent
-            score: scored.score,
-            intent: scored.intent,
-            matched_keywords: scored.matched_keywords,
-            // sentiment
-            sentiment: sentimentResult.sentiment,
-            sentiment_score: sentimentResult.sentiment_score,
-            positive_signals: sentimentResult.positive_signals,
-            negative_signals: sentimentResult.negative_signals,
-            // derived
-            commercial_score,
-          };
+            score: scored,
+            sentiment: sentimentResult,
+            minLeadScore: input.minLeadScore,
+          });
 
           await Actor.pushData(lead);
           leadsPushed += 1;
@@ -474,7 +440,9 @@ async function processLeads(input: NormalizedInput): Promise<{
 
     await crawler.run();
 
-    await Actor.pushData(allComments);
+    if (input.debugComments) {
+      await Actor.pushData(allComments);
+    }
     await Actor.pushData(allLeads);
 
     log.info('Lead generation complete', {
@@ -491,7 +459,7 @@ async function processLeads(input: NormalizedInput): Promise<{
       postsProcessed: perPostMeta.length,
       totalComments,
       totalLeads,
-      comments: allComments,
+      comments: input.debugComments ? allComments : [],
       leads: allLeads,
     };
   } catch (err: unknown) {
@@ -500,19 +468,7 @@ async function processLeads(input: NormalizedInput): Promise<{
     throw err;
   } finally {
     // ── build and push analytics summary ─────────────────────────────
-    const analyticsSummary = buildSummary(
-      allScoredRecords,
-      allLeads.map((l) => ({
-        url: l.url,
-        username: l.username,
-        text: l.text,
-        score: l.score,
-        intent: l.intent,
-        matched_keywords: l.matched_keywords,
-        sentiment: l.sentiment,
-        sentiment_score: l.sentiment_score,
-      })),
-    );
+    const analyticsSummary = buildSummary(allScoredRecords, qualifiedLeadRecords);
 
     await Actor.pushData(analyticsSummary);
 
