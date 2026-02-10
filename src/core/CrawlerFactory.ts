@@ -3,6 +3,7 @@ import {
   type HttpCrawlingContext,
   type HttpCrawlerOptions,
 } from 'crawlee';
+import type { OptionsInit as GotOptions } from 'got-scraping';
 
 export type CrawlerFactoryOptions = {
   proxyConfiguration: HttpCrawlerOptions<HttpCrawlingContext>['proxyConfiguration'];
@@ -32,9 +33,9 @@ export function createCrawler(options: CrawlerFactoryOptions): HttpCrawler<HttpC
   } = options;
 
   const hooks = [
-    (crawlingContext, gotOptions) => {
+    (_crawlingContext: HttpCrawlingContext, gotOptions: GotOptions) => {
       // Disable HTTP/2 for IG to avoid early-terminated responses.
-      (gotOptions as { http2?: boolean }).http2 = false;
+      gotOptions.http2 = false;
     },
     ...(preNavigationHooks ?? []),
   ];
