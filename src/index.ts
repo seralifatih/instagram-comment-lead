@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Actor } from 'apify';
-import { HttpCrawler, type HttpCrawlingContext, log } from 'crawlee';
+import { HttpCrawler, type HttpCrawlingContext, log, gotScraping } from 'crawlee';
 import type { NormalizedInput } from './types/Input.js';
 import { INPUT_DEFAULTS, INPUT_CONSTRAINTS } from './types/Input.js';
 
@@ -101,9 +101,15 @@ async function main(): Promise<void> {
     buildVersion: BUILD_VERSION,
     postUrls: input.postUrls,
     postUrlCount: input.postUrls.length,
+    sessionIdMasked: maskSessionId(input.sessionId),
+    debugComments: input.debugComments,
     maxCommentsPerPost: input.maxCommentsPerPost,
     targetLeads: input.targetLeads,
     minLeadScore: input.minLeadScore,
+  });
+
+  log.info('Authenticated mode active', {
+    sessionIdMasked: maskSessionId(input.sessionId),
   });
 
   // 4. Business logic
@@ -176,6 +182,21 @@ function validateInput(raw: unknown): NormalizedInput {
     postUrls.push(url);
   }
 
+  // sessionId (required)
+  const rawSessionId: unknown = obj['sessionId'];
+  if (typeof rawSessionId !== 'string' || rawSessionId.trim().length === 0) {
+    throw new Error(
+      'INPUT_MISSING_FIELD: "sessionId" is required and must be a non-empty string.',
+    );
+  }
+  const sessionId = rawSessionId.trim();
+
+  const debugComments = resolveBool(
+    obj['debugComments'],
+    'debugComments',
+    INPUT_DEFAULTS.debugComments,
+  );
+
   // ── optional numeric fields ─────────────────────────────────────────
   const maxCommentsPerPost = resolveInt(
     obj['maxCommentsPerPost'],
@@ -198,7 +219,7 @@ function validateInput(raw: unknown): NormalizedInput {
     INPUT_CONSTRAINTS.minLeadScore,
   );
 
-  return { postUrls, maxCommentsPerPost, targetLeads, minLeadScore };
+  return { postUrls, sessionId, debugComments, maxCommentsPerPost, targetLeads, minLeadScore };
 }
 
 // ── field resolvers ──────────────────────────────────────────────────────
@@ -253,6 +274,19 @@ function resolveNum(
   return value;
 }
 
+/** Resolve an optional boolean: missing → default, wrong type → throw. */
+function resolveBool(value: unknown, name: string, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+
+  if (typeof value !== 'boolean') {
+    throw new Error(
+      `INPUT_TYPE: "${name}" must be a boolean, received ${JSON.stringify(value)}.`,
+    );
+  }
+
+  return value;
+}
+
 // ── business logic (stub) ────────────────────────────────────────────────
 
 async function processLeads(input: NormalizedInput): Promise<void> {
@@ -262,6 +296,9 @@ async function processLeads(input: NormalizedInput): Promise<void> {
 
   let totalComments = 0;
   let totalLeads = 0;
+  let commentsPushed = 0;
+  let leadsPushed = 0;
+  let postsPushed = 0;
   let targetReached = false;
   let status: 'success' | 'failed' = 'success';
   let failureReason: string | undefined;
@@ -271,16 +308,74 @@ async function processLeads(input: NormalizedInput): Promise<void> {
   const perPostMeta: Array<Record<string, unknown>> = [];
 
   try {
+    const proxyConfiguration = await Actor.createProxyConfiguration({
+      groups: ['RESIDENTIAL'],
+    });
+
     crawler = new HttpCrawler<HttpCrawlingContext>({
+      proxyConfiguration,
       requestQueue,
       maxConcurrency: 4,
+      minDelayBetweenRequestsMillis: 1500,
+      maxRequestsPerMinute: 20,
+      maxRequestRetries: 5,
+      retryOnBlocked: true,
       requestHandlerTimeoutSecs: 60,
-      requestHandler: async ({ request, body, contentType }) => {
+      preNavigationHooks: [
+        ({ request }) => {
+          request.headers = {
+            ...(request.headers ?? {}),
+            ...buildInstagramHeaders(input.sessionId),
+          };
+        },
+      ],
+      requestHandler: async ({ request, body, contentType, response, proxyInfo }) => {
         if (targetReached) return;
 
         const rawBody = typeof body === 'string' ? body : body?.toString() ?? '';
-        const { post, comments } = extractInstagramData(rawBody, contentType?.type);
+        const statusCode = response?.statusCode ?? null;
+        const location = response?.headers?.location ?? response?.headers?.Location;
+        const isLoginRedirect = typeof location === 'string' && location.includes('login');
+        const blocked = statusCode === 403 || statusCode === 429 || (statusCode === 302 && isLoginRedirect);
+        if (blocked) {
+          log.warning('Blocked response detected', {
+            url: request.url,
+            statusCode,
+            location: location ?? null,
+            proxyIp: proxyInfo?.ip ?? null,
+            responseHeaders: response?.headers ?? null,
+          });
+        }
+        const responseBytes =
+          typeof body === 'string'
+            ? Buffer.byteLength(body)
+            : body
+              ? body.length
+              : 0;
+        log.info('HTTP response', {
+          url: request.url,
+          statusCode,
+          responseBytes,
+        });
         const sourceUrl = (request.userData?.sourceUrl as string | undefined) ?? request.url;
+        const { post, comments } = extractInstagramData(rawBody, contentType?.type);
+        const shortcode = extractShortcode(sourceUrl);
+        let finalComments = comments;
+        if (finalComments.length === 0 && shortcode) {
+          const graphqlComments = await fetchGraphqlComments({
+            shortcode,
+            maxComments: input.maxCommentsPerPost,
+            sessionId: input.sessionId,
+            proxyConfiguration,
+          });
+          if (graphqlComments.length > 0) {
+            log.info('GraphQL fallback returned comments', {
+              url: sourceUrl,
+              count: graphqlComments.length,
+            });
+            finalComments = graphqlComments;
+          }
+        }
 
         log.info('Handling request', {
           url: request.url,
@@ -288,7 +383,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           uniqueKey: request.uniqueKey,
         });
 
-        const limitedComments = comments.slice(0, input.maxCommentsPerPost);
+        const limitedComments = finalComments.slice(0, input.maxCommentsPerPost);
         totalComments += limitedComments.length;
 
         log.info('Comments scraped', {
@@ -296,6 +391,17 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           count: limitedComments.length,
           totalComments,
         });
+
+        if (input.debugComments && limitedComments.length > 0) {
+          const rawCommentRecords = limitedComments.map((comment) => ({
+            type: 'comment',
+            url: sourceUrl,
+            username: comment.username,
+            text: comment.text,
+          }));
+          await Actor.pushData(rawCommentRecords);
+          commentsPushed += rawCommentRecords.length;
+        }
 
         if (post) {
           const postRecord = {
@@ -306,6 +412,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           };
           perPostMeta.push(postRecord);
           await Actor.pushData(postRecord);
+          postsPushed += 1;
         }
 
         for (const comment of limitedComments) {
@@ -323,6 +430,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
             score,
           };
           await Actor.pushData(lead);
+          leadsPushed += 1;
 
           if (totalLeads >= input.targetLeads) {
             targetReached = true;
@@ -342,7 +450,12 @@ async function processLeads(input: NormalizedInput): Promise<void> {
 
     const requests = input.postUrls.map((url) => {
       const apiUrl = toInstagramApiUrl(url);
-      return { url: apiUrl, label: 'POST_API', userData: { sourceUrl: url } };
+      return {
+        url: apiUrl,
+        label: 'POST_API',
+        userData: { sourceUrl: url },
+        headers: buildInstagramHeaders(input.sessionId),
+      };
     });
 
     if (requests.length === 0) {
@@ -361,12 +474,20 @@ async function processLeads(input: NormalizedInput): Promise<void> {
       queuedUrls: queuedUrls.length,
       totalComments,
       totalLeads,
+      postsPushed,
+      leadsPushed,
+      commentsPushed,
     });
   } catch (err: unknown) {
     status = 'failed';
     failureReason = err instanceof Error ? err.message : String(err);
     throw err;
   } finally {
+    log.info('Dataset item counts', {
+      postsPushed,
+      leadsPushed,
+      commentsPushed,
+    });
     await Actor.pushData({
       type: 'summary',
       status,
@@ -410,10 +531,155 @@ function scoreLead(text: string): number {
 
 function toInstagramApiUrl(url: string): string {
   const trimmed = url.split('?')[0] ?? url;
-  if (trimmed.endsWith('/')) {
-    return `${trimmed}?__a=1&__d=dis`;
+  const normalized = trimmed.replace(/\/+$/, '');
+  return `${normalized}/?__a=1&__d=dis`;
+}
+
+function maskSessionId(sessionId: string): string {
+  if (sessionId.length <= 6) return sessionId;
+  return sessionId.slice(0, 6);
+}
+
+function buildInstagramHeaders(sessionId: string): Record<string, string> {
+  const userAgents = [
+    'Instagram 312.0.0.0.0 Android',
+    'Instagram 312.0.0.0.0 Android (30/11; 420dpi; 1080x2340; samsung; SM-G975F; beyond2; exynos9820; en_US; 522043675)',
+    'Instagram 312.0.0.0.0 Android (29/10; 320dpi; 720x1520; Xiaomi; Redmi Note 7; lavender; qcom; en_US; 522043675)',
+    'Instagram 312.0.0.0.0 Android (28/9; 480dpi; 1080x1920; OnePlus; ONEPLUS A6013; OnePlus6T; qcom; en_US; 522043675)',
+  ];
+  const languages = [
+    'en-US,en;q=0.9',
+    'en-US,en;q=0.8',
+    'en-GB,en;q=0.8',
+  ];
+  const acceptEncodings = [
+    'gzip, deflate, br',
+    'gzip, br',
+  ];
+  const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
+  const lang = languages[Math.floor(Math.random() * languages.length)];
+  const enc = acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)];
+  return {
+    Cookie: `sessionid=${sessionId};`,
+    'User-Agent': ua,
+    'X-IG-App-ID': '936619743392459',
+    Accept: '*/*',
+    'Accept-Language': lang,
+    'Accept-Encoding': enc,
+    Referer: 'https://www.instagram.com/',
+  };
+}
+
+function extractShortcode(url: string): string | null {
+  const match = url.match(/instagram\.com\/(?:p|reel)\/([^/?#]+)/);
+  return match?.[1] ?? null;
+}
+
+async function fetchGraphqlComments(params: {
+  shortcode: string;
+  maxComments: number;
+  sessionId: string;
+  proxyConfiguration: Awaited<ReturnType<typeof Actor.createProxyConfiguration>>;
+}): Promise<Array<{ username: string; text: string }>> {
+  const { shortcode, maxComments, sessionId, proxyConfiguration } = params;
+  const endpoint = 'https://www.instagram.com/graphql/query/';
+  const docId = '8845758582119845';
+  const pageSize = Math.min(50, Math.max(10, maxComments));
+  let after: string | null = null;
+  const results: Array<{ username: string; text: string }> = [];
+
+  for (let page = 0; page < 40 && results.length < maxComments; page += 1) {
+    const variables: Record<string, unknown> = {
+      shortcode,
+      first: pageSize,
+    };
+    if (after) variables['after'] = after;
+
+    let proxyUrl: string | undefined;
+    try {
+      const proxyInfo = await proxyConfiguration?.newProxyInfo();
+      proxyUrl = proxyInfo?.url ?? undefined;
+    } catch {
+      proxyUrl = undefined;
+    }
+
+    const body = new URLSearchParams({
+      doc_id: docId,
+      variables: JSON.stringify(variables),
+    });
+
+    try {
+      const response = await gotScraping({
+        url: endpoint,
+        method: 'POST',
+        body: body.toString(),
+        headers: {
+          ...buildInstagramHeaders(sessionId),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        proxyUrl,
+        timeout: { request: 30000 },
+        retry: { limit: 0 },
+      });
+
+      const statusCode = response.statusCode;
+      const location = response.headers?.location ?? response.headers?.Location;
+      const isLoginRedirect = typeof location === 'string' && location.includes('login');
+      const blocked = statusCode === 403 || statusCode === 429 || (statusCode === 302 && isLoginRedirect);
+      if (blocked) {
+        log.warning('GraphQL blocked', {
+          shortcode,
+          statusCode,
+          location: location ?? null,
+          responseHeaders: response.headers ?? null,
+        });
+        return results;
+      }
+
+      const payload = safeJsonParse(response.body?.toString() ?? '');
+      if (!payload) return results;
+
+      const parsed = parseGraphqlComments(payload);
+      if (parsed.comments.length === 0) return results;
+
+      results.push(...parsed.comments);
+      after = parsed.endCursor ?? null;
+      if (!parsed.hasNextPage || !after) break;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warning('GraphQL fallback failed', { shortcode, error: msg });
+      return results;
+    }
   }
-  return `${trimmed}/?__a=1&__d=dis`;
+
+  return results.slice(0, maxComments);
+}
+
+function parseGraphqlComments(data: unknown): {
+  comments: Array<{ username: string; text: string }>;
+  hasNextPage: boolean;
+  endCursor?: string;
+} {
+  const media =
+    (data as any)?.data?.shortcode_media ??
+    (data as any)?.data?.xdt_shortcode_media ??
+    (data as any)?.shortcode_media;
+
+  const edge = media?.edge_media_to_parent_comment ?? media?.edge_media_to_comment;
+  const edges = edge?.edges ?? [];
+  const comments: Array<{ username: string; text: string }> = [];
+  for (const item of edges) {
+    const node = item?.node ?? item;
+    const username = node?.owner?.username ?? node?.user?.username ?? '';
+    const text = node?.text ?? '';
+    if (username && text) comments.push({ username, text });
+  }
+
+  const pageInfo = edge?.page_info ?? edge?.pageInfo ?? {};
+  const hasNextPage = Boolean(pageInfo?.has_next_page ?? pageInfo?.hasNextPage);
+  const endCursor = pageInfo?.end_cursor ?? pageInfo?.endCursor;
+
+  return { comments, hasNextPage, endCursor };
 }
 
 function extractInstagramData(

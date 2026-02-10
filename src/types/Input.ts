@@ -10,6 +10,12 @@ export interface InputSchema {
   /** Instagram post or reel URLs to analyse. */
   postUrls: string[];
 
+  /** Instagram sessionid cookie value for authenticated scraping. */
+  sessionId: string;
+
+  /** Push raw comments to dataset for debugging. @default false */
+  debugComments?: boolean;
+
   /** Max comments to fetch per post. @default 1000 */
   maxCommentsPerPost?: number;
 
@@ -36,10 +42,11 @@ export type NormalizedInput = Required<InputSchema>;
  * here is an immediate type error.
  */
 export const INPUT_DEFAULTS = {
+  debugComments: false,
   maxCommentsPerPost: 1000,
   targetLeads: 50,
   minLeadScore: 0.4,
-} as const satisfies Required<Omit<InputSchema, 'postUrls'>>;
+} as const satisfies Required<Omit<InputSchema, 'postUrls' | 'sessionId'>>;
 
 /**
  * Validation constraints mirroring .actor/input_schema.json.
@@ -52,6 +59,7 @@ export const INPUT_CONSTRAINTS = {
     maxItems: 50,
     pattern: /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/,
   },
+  debugComments: {},
   maxCommentsPerPost: { min: 10, max: 10_000 },
   targetLeads: { min: 1, max: 1_000 },
   minLeadScore: { min: 0, max: 1 },

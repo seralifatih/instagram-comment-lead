@@ -6,13 +6,14 @@ This Apify Actor analyses comments on Instagram posts and reels, classifies comm
 
 ## Input
 
-The Actor accepts a JSON object with one required field and three optional fields.
+The Actor accepts a JSON object with two required fields and four optional fields.
 
 ### Required
 
 | Field | Type | Constraints | Description |
 |-------|------|-------------|-------------|
 | `postUrls` | `string[]` | 1–50 items, each matching `instagram.com/p/` or `/reel/` | Instagram post or reel URLs to analyse |
+| `sessionId` | `string` | Non-empty | Instagram `sessionid` cookie value for authenticated scraping |
 
 ### Optional
 
@@ -21,6 +22,7 @@ The Actor accepts a JSON object with one required field and three optional field
 | `maxCommentsPerPost` | `integer` | `1000` | 10–10,000 | Maximum comments to fetch per post |
 | `targetLeads` | `integer` | `50` | 1–1,000 | Stop early once this many qualified leads are found |
 | `minLeadScore` | `number` | `0.4` | 0.0–1.0 | Minimum quality score a lead must reach to appear in results |
+| `debugComments` | `boolean` | `false` | - | When enabled, pushes raw comment records to the dataset |
 
 When an optional field is omitted, the default is applied automatically. Extra fields are rejected (`additionalProperties: false`).
 
@@ -34,9 +36,11 @@ Full configuration:
     "https://www.instagram.com/p/C3xYz1234Ab/",
     "https://www.instagram.com/reel/C3xYz5678Cd/"
   ],
+  "sessionId": "123456789%3AABCDEF123456789%3A12",
   "maxCommentsPerPost": 500,
   "targetLeads": 30,
-  "minLeadScore": 0.6
+  "minLeadScore": 0.6,
+  "debugComments": false
 }
 ```
 
@@ -44,9 +48,17 @@ Minimal valid input (defaults to 1,000 comments, 50 leads, 0.4 score):
 
 ```json
 {
-  "postUrls": ["https://www.instagram.com/p/C3xYz1234Ab/"]
+  "postUrls": ["https://www.instagram.com/p/C3xYz1234Ab/"],
+  "sessionId": "123456789%3AABCDEF123456789%3A12"
 }
 ```
+
+### Getting `sessionId`
+
+1. Log in to Instagram in your browser.
+2. Open DevTools and go to `Application` (Chrome) or `Storage` (Firefox).
+3. Under `Cookies`, select `https://www.instagram.com`.
+4. Copy the value of the `sessionid` cookie and paste it into `sessionId`.
 
 ### URL format
 

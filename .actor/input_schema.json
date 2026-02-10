@@ -19,6 +19,21 @@
       "minItems": 1,
       "maxItems": 50
     },
+    "sessionId": {
+      "title": "Instagram sessionId",
+      "type": "string",
+      "description": "Instagram sessionid cookie for authenticated scraping.",
+      "minLength": 1,
+      "editor": "textfield",
+      "example": "123456789%3AABCDEF123456789%3A12"
+    },
+    "debugComments": {
+      "title": "Debug Comments",
+      "type": "boolean",
+      "description": "When enabled, pushes raw comment records to the dataset for debugging.",
+      "default": false,
+      "editor": "checkbox"
+    },
     "maxCommentsPerPost": {
       "title": "Max Comments Per Post",
       "type": "integer",
@@ -51,7 +66,8 @@
     }
   },
   "required": [
-    "postUrls"
+    "postUrls",
+    "sessionId"
   ],
   "additionalProperties": false
 }
