@@ -6,7 +6,10 @@ export function toInstagramApiUrl(url: string): string {
   return `https://www.instagram.com/p/${match[1]}/`;
 }
 
-export function buildInstagramHeaders(sessionId: string): Record<string, string> {
+export function buildInstagramHeaders(
+  sessionId: string,
+  cookieOverride?: string,
+): Record<string, string> {
   const userAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
   const languages = ['en-US,en;q=0.9', 'en-US,en;q=0.8', 'en-GB,en;q=0.8'];
@@ -16,8 +19,9 @@ export function buildInstagramHeaders(sessionId: string): Record<string, string>
     acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)] ??
     acceptEncodings[0] ??
     '';
+  const cookieHeader = cookieOverride ?? `sessionid=${sessionId};`;
   return {
-    Cookie: `sessionid=${sessionId};`,
+    Cookie: cookieHeader,
     'User-Agent': userAgent,
     'X-IG-App-ID': '936619743392459',
     Accept: '*/*',
@@ -64,8 +68,17 @@ export async function fetchGraphqlComments(params: {
   proxyConfiguration: ProxyConfiguration;
   request: GraphqlRequest;
   logger: GraphqlLogger;
+  cookieHeader?: string;
 }): Promise<RawComment[]> {
-  const { shortcode, maxComments, sessionId, proxyConfiguration, request, logger } = params;
+  const {
+    shortcode,
+    maxComments,
+    sessionId,
+    proxyConfiguration,
+    request,
+    logger,
+    cookieHeader,
+  } = params;
 
   let proxyUrl: string | undefined;
   try {
@@ -75,7 +88,7 @@ export async function fetchGraphqlComments(params: {
     proxyUrl = undefined;
   }
 
-  const headers = buildInstagramHeaders(sessionId);
+  const headers = buildInstagramHeaders(sessionId, cookieHeader);
 
   const graphqlResult = await tryGraphqlStrategy({
     shortcode,
@@ -99,6 +112,39 @@ export async function fetchGraphqlComments(params: {
 
   logger.warning('All comment fetch strategies exhausted', { shortcode });
   return [];
+}
+
+export function mergeCookieHeader(
+  baseCookie: string,
+  setCookie?: string | string[],
+): string {
+  const jar = new Map<string, string>();
+
+  for (const part of baseCookie.split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx === -1) continue;
+    const key = trimmed.slice(0, idx).trim();
+    const value = trimmed.slice(idx + 1).trim();
+    if (key) jar.set(key, value);
+  }
+
+  const setCookieList = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
+  for (const entry of setCookieList) {
+    const first = entry.split(';')[0]?.trim();
+    if (!first) continue;
+    const idx = first.indexOf('=');
+    if (idx === -1) continue;
+    const key = first.slice(0, idx).trim();
+    const value = first.slice(idx + 1).trim();
+    if (key) jar.set(key, value);
+  }
+
+  return Array.from(jar.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join('; ')
+    .concat(';');
 }
 
 const GRAPHQL_DOC_IDS = [

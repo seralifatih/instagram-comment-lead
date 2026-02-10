@@ -31,6 +31,7 @@ import {
   buildInstagramHeaders as buildInstagramHeadersImpl,
   fetchGraphqlComments as fetchGraphqlCommentsImpl,
   maskSessionId as maskSessionIdImpl,
+  mergeCookieHeader as mergeCookieHeaderImpl,
   toInstagramApiUrl as toInstagramApiUrlImpl,
 } from './extraction/InstagramApi.js';
 import { scoreLead as scoreLeadImpl } from './intelligence/LeadScorer.js';
@@ -281,7 +282,8 @@ async function processLeads(input: NormalizedInput): Promise<{
         const { post, comments } = parsePost(rawBody);
 
         if (comments.length === 0) {
-          const key = `DEBUG_HTML_${request.userData.shortcode || 'unknown'}`;
+          const fallbackShortcode = extractShortcode(sourceUrl) ?? 'unknown';
+          const key = `DEBUG_HTML_${request.userData.shortcode || fallbackShortcode}`;
           await Actor.setValue(key, rawBody, { contentType: 'text/html' });
           log.warning(`Zero comments found. Saved HTML to Key-Value Store: ${key}`);
         }
@@ -290,11 +292,17 @@ async function processLeads(input: NormalizedInput): Promise<{
         let finalComments = comments;
 
         if (finalComments.length === 0 && shortcode) {
+          const setCookieHeader = response?.headers?.['set-cookie'];
+          const cookieHeader = mergeCookieHeader(
+            `sessionid=${input.sessionId};`,
+            setCookieHeader,
+          );
           const graphqlComments = await fetchGraphqlComments({
             shortcode,
             maxComments: input.maxCommentsPerPost,
             sessionId: input.sessionId,
             proxyConfiguration,
+            cookieHeader,
           });
           if (graphqlComments.length > 0) {
             log.info('GraphQL fallback returned comments', {
@@ -419,11 +427,12 @@ async function processLeads(input: NormalizedInput): Promise<{
     }
 
     const requests = input.postUrls.map((url) => {
+      const shortcode = extractShortcode(url);
       const apiUrl = toInstagramApiUrl(url);
       return {
         url: apiUrl,
         label: 'POST_API',
-        userData: { sourceUrl: url },
+        userData: { sourceUrl: url, shortcode },
         headers: buildInstagramHeaders(input.sessionId),
       };
     });
@@ -518,11 +527,16 @@ function maskSessionId(sessionId: string): string {
   return maskSessionIdImpl(sessionId);
 }
 
+function mergeCookieHeader(baseCookie: string, setCookie?: string | string[]): string {
+  return mergeCookieHeaderImpl(baseCookie, setCookie);
+}
+
 async function fetchGraphqlComments(params: {
   shortcode: string;
   maxComments: number;
   sessionId: string;
   proxyConfiguration: Awaited<ReturnType<typeof Actor.createProxyConfiguration>>;
+  cookieHeader?: string;
 }): Promise<Array<{ username: string; text: string }>> {
   return fetchGraphqlCommentsImpl({
     ...params,
