@@ -113,9 +113,45 @@ async function main(): Promise<void> {
   });
 
   // 4. Business logic
-  await processLeads(input);
+  const result = await processLeads(input);
 
+  const comments = Array.isArray(result.comments) ? result.comments : [];
+  const leads = Array.isArray(result.leads) ? result.leads : [];
+  log.info('About to push dataset', {
+    commentsCount: comments.length,
+    leadsCount: leads.length,
+  });
+  try {
+    await Actor.pushData({
+      meta: {
+        postUrl: result.postUrls,
+        totalComments: result.totalComments,
+        totalLeads: result.totalLeads,
+      },
+      comments,
+      leads,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('Dataset push failed', { error: msg });
+    await Actor.pushData(comments);
+    await Actor.pushData(leads);
+  }
+
+  const outputObject = {
+    postsProcessed: result.postsProcessed,
+    totalComments: result.totalComments,
+    totalLeads: result.totalLeads,
+    leads,
+  };
+  await Actor.setValue('RESULT', outputObject);
+
+  log.info('Dataset pushed', { comments: comments.length, leads: leads.length });
+
+  await Actor.exit();
   log.info('Actor finished', { buildVersion: BUILD_VERSION });
+
+  return outputObject;
 }
 
 
@@ -289,7 +325,14 @@ function resolveBool(value: unknown, name: string, fallback: boolean): boolean {
 
 // ── business logic (stub) ────────────────────────────────────────────────
 
-async function processLeads(input: NormalizedInput): Promise<void> {
+async function processLeads(input: NormalizedInput): Promise<{
+  postUrls: string[];
+  postsProcessed: number;
+  totalComments: number;
+  totalLeads: number;
+  comments: Array<{ url: string; username: string; text: string }>;
+  leads: Array<{ url: string; username: string; text: string; score: number }>;
+}> {
   log.info('Lead pipeline started', { urlCount: input.postUrls.length });
 
   const requestQueue = await Actor.openRequestQueue();
@@ -306,6 +349,24 @@ async function processLeads(input: NormalizedInput): Promise<void> {
   let crawler: HttpCrawler<HttpCrawlingContext> | null = null;
   const queuedUrls: string[] = [];
   const perPostMeta: Array<Record<string, unknown>> = [];
+  const allComments: Array<{ url: string; username: string; text: string }> = [];
+  const allLeads: Array<{ url: string; username: string; text: string; score: number }> = [];
+
+  let finalResult: {
+    postUrls: string[];
+    postsProcessed: number;
+    totalComments: number;
+    totalLeads: number;
+    comments: Array<{ url: string; username: string; text: string }>;
+    leads: Array<{ url: string; username: string; text: string; score: number }>;
+  } = {
+    postUrls: input.postUrls,
+    postsProcessed: 0,
+    totalComments: 0,
+    totalLeads: 0,
+    comments: [],
+    leads: [],
+  };
 
   try {
     const proxyConfiguration = await Actor.createProxyConfiguration({
@@ -391,15 +452,22 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           totalComments,
         });
 
-        if (input.debugComments && limitedComments.length > 0) {
+        if (limitedComments.length > 0) {
           const rawCommentRecords = limitedComments.map((comment) => ({
             type: 'comment',
             url: sourceUrl,
             username: comment.username,
             text: comment.text,
           }));
-          await Actor.pushData(rawCommentRecords);
-          commentsPushed += rawCommentRecords.length;
+          allComments.push(...rawCommentRecords.map((r) => ({
+            url: r.url,
+            username: r.username,
+            text: r.text,
+          })));
+          if (input.debugComments) {
+            await Actor.pushData(rawCommentRecords);
+            commentsPushed += rawCommentRecords.length;
+          }
         }
 
         if (post) {
@@ -430,6 +498,12 @@ async function processLeads(input: NormalizedInput): Promise<void> {
           };
           await Actor.pushData(lead);
           leadsPushed += 1;
+          allLeads.push({
+            url: lead.url,
+            username: lead.username,
+            text: lead.text,
+            score: lead.score,
+          });
 
           if (totalLeads >= input.targetLeads) {
             targetReached = true;
@@ -469,6 +543,9 @@ async function processLeads(input: NormalizedInput): Promise<void> {
 
     await crawler.run();
 
+    await Actor.pushData(allComments);
+    await Actor.pushData(allLeads);
+
     log.info('Lead generation complete', {
       queuedUrls: queuedUrls.length,
       totalComments,
@@ -477,6 +554,15 @@ async function processLeads(input: NormalizedInput): Promise<void> {
       leadsPushed,
       commentsPushed,
     });
+
+    finalResult = {
+      postUrls: input.postUrls,
+      postsProcessed: perPostMeta.length,
+      totalComments,
+      totalLeads,
+      comments: allComments,
+      leads: allLeads,
+    };
   } catch (err: unknown) {
     status = 'failed';
     failureReason = err instanceof Error ? err.message : String(err);
@@ -500,6 +586,8 @@ async function processLeads(input: NormalizedInput): Promise<void> {
       completedAt: new Date().toISOString(),
     });
   }
+
+  return finalResult;
 }
 
 
