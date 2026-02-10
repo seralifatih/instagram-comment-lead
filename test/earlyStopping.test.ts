@@ -1,23 +1,8 @@
-import {
-  updateLeadValueStats,
-  shouldStopEarly,
-  resetGlobalStats,
-  resetEarlyStopState,
-  setTargetLeadCountForTests
-} from '../src/main.js';
+import { scoreLead } from '../src/intelligence/LeadScorer.js';
 
-describe('smart early stopping logic', () => {
-  beforeEach(() => {
-    resetGlobalStats();
-    resetEarlyStopState();
-    setTargetLeadCountForTests(2);
-  });
-
-  test('triggers early stop when high intent leads reach target', () => {
-    updateLeadValueStats({ is_lead: true, leadScore: 'HIGH', audience_qualification: { tier: 'LOW_VALUE_AUDIENCE' } });
-    expect(shouldStopEarly()).toBe(false);
-
-    updateLeadValueStats({ is_lead: true, leadScore: 'HIGH', audience_qualification: { tier: 'LOW_VALUE_AUDIENCE' } });
-    expect(shouldStopEarly()).toBe(true);
+describe('lead scoring metadata', () => {
+  test('returns matched keywords', () => {
+    const result = scoreLead('dm me price details');
+    expect(result.matched_keywords.length).toBeGreaterThan(0);
   });
 });

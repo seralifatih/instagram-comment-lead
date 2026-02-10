@@ -1,13 +1,11 @@
-import { assessCommentQuality } from '../src/commentQuality.js';
+import { isSpam } from '../src/intelligence/SpamFilter.js';
 
-describe('comment quality filter', () => {
-  test('flags emoji-only spam', () => {
-    const result = assessCommentQuality('\u{1F525}\u{1F525}');
-    expect(result.is_low_quality).toBe(true);
+describe('comment quality via spam filter', () => {
+  test('flags obvious spam', () => {
+    expect(isSpam('promote on this page')).toBe(true);
   });
 
-  test('passes meaningful text', () => {
-    const result = assessCommentQuality('Can you share the price?');
-    expect(result.is_low_quality).toBe(false);
+  test('does not flag normal comment', () => {
+    expect(isSpam('Looks great, interested in pricing')).toBe(false);
   });
 });

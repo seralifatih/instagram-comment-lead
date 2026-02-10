@@ -1,21 +1,16 @@
-import { detectPromoterSpam } from '../src/main.js';
+import { isSpam } from '../src/intelligence/SpamFilter.js';
 
-describe('promoter spam detection', () => {
-  test('flags follow me patterns', () => {
-    const result = detectPromoterSpam('follow me and check my page');
-    expect(result.isSpam).toBe(true);
-    expect(result.score).toBeGreaterThan(0);
+describe('spam detection', () => {
+  test('flags repetitive text', () => {
+    expect(isSpam('spam spam spam')).toBe(true);
   });
 
-  test('flags crypto contract addresses', () => {
-    const result = detectPromoterSpam('new token address 0x1234567890abcdef1234567890abcdef12345678');
-    expect(result.isSpam).toBe(true);
-    expect(result.keywords).toContain('crypto_address');
+  test('flags known spam phrases', () => {
+    expect(isSpam('promote on my page')).toBe(true);
+    expect(isSpam('send pic for details')).toBe(true);
   });
 
-  test('flags referral phrases', () => {
-    const result = detectPromoterSpam('use my code for a discount, referral inside');
-    expect(result.isSpam).toBe(true);
-    expect(result.keywords).toContain('referral');
+  test('does not flag normal comment', () => {
+    expect(isSpam('interested in price, please DM')).toBe(false);
   });
 });

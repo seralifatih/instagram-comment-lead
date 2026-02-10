@@ -1,0 +1,30 @@
+export const INTENT_KEYWORDS: Readonly<Record<string, number>> = {
+  // English
+  price: 10,
+  cost: 10,
+  'how much': 10,
+  interested: 8,
+  buy: 10,
+  order: 8,
+  details: 6,
+  info: 6,
+  dm: 5,
+  message: 5,
+  ship: 6,
+
+  // Turkish (ASCII-only)
+  fiyat: 10,
+  ucret: 10,
+  kac: 8,
+  'ne kadar': 10,
+  ilgileniyorum: 8,
+  al: 8,
+  alirim: 10,
+  siparis: 8,
+  bilgi: 6,
+  detay: 6,
+  dmden: 5,
+  dmdenbilir: 5,
+  mesaj: 5,
+  kargo: 6,
+};

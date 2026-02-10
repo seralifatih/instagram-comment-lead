@@ -1,22 +1,27 @@
-import { detectLanguage, setLanguageConfigForTests, DEFAULT_LANGUAGE_DETECTION } from '../src/main.js';
+import { parsePost } from '../src/extraction/InstagramParser.js';
 
-describe('language detection', () => {
-  beforeEach(() => {
-    setLanguageConfigForTests({ ...DEFAULT_LANGUAGE_DETECTION, enableFastText: false });
-  });
+describe('instagram parser', () => {
+  test('parses embedded JSON from HTML', () => {
+    const html = '<html><script type="application/json" id="__NEXT_DATA__">' +
+      JSON.stringify({
+        props: {
+          pageProps: {
+            shortcode_media: {
+              id: '1',
+              shortcode: 'ABC',
+              edge_media_to_caption: { edges: [{ node: { text: 'caption' } }] },
+              edge_media_preview_like: { count: 5 },
+              edge_media_to_parent_comment: { count: 1, edges: [{ node: { owner: { username: 'u' }, text: 'price?' } }] },
+              taken_at_timestamp: 1700000000,
+              owner: { username: 'owner' }
+            }
+          }
+        }
+      }) +
+      '</script></html>';
 
-  test('detects Hindi by script', () => {
-    const lang = detectLanguage('\u0939\u093f\u0928\u094d\u0926\u0940 \u092d\u093e\u0937\u093e \u092e\u0947\u0902');
-    expect(lang).toBe('hi');
-  });
-
-  test('detects English by stopwords', () => {
-    const lang = detectLanguage('this is a simple test and you are here');
-    expect(lang).toBe('en');
-  });
-
-  test('detects Spanish by stopwords', () => {
-    const lang = detectLanguage('como estas y donde esta la informacion');
-    expect(lang).toBe('es');
+    const parsed = parsePost(html);
+    expect(parsed.post?.shortcode).toBe('ABC');
+    expect(parsed.comments.length).toBe(1);
   });
 });
