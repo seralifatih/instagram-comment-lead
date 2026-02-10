@@ -59,6 +59,8 @@ export type GraphqlLogger = {
   warning: (message: string, data?: Record<string, unknown>) => void;
 };
 
+import { randomBytes, randomUUID } from 'node:crypto';
+
 export type RawComment = { username: string; text: string };
 
 export async function fetchGraphqlComments(params: {
@@ -109,6 +111,17 @@ export async function fetchGraphqlComments(params: {
     logger,
   });
   if (restShortcodeResult.length > 0) return restShortcodeResult;
+
+  const mobileResult = await tryMobileRestStrategy({
+    shortcode,
+    maxComments,
+    sessionId,
+    cookieHeader: headers['Cookie'] ?? `sessionid=${sessionId};`,
+    proxyUrl,
+    request,
+    logger,
+  });
+  if (mobileResult.length > 0) return mobileResult;
 
   logger.warning('All comment fetch strategies exhausted', { shortcode });
   return [];
@@ -322,6 +335,93 @@ async function tryRestShortcodeStrategy(params: {
   return results.slice(0, maxComments);
 }
 
+// Strategy 3: Mobile private API (i.instagram.com)
+// Uses a mobile UA and app-like headers for higher success rate.
+async function tryMobileRestStrategy(params: {
+  shortcode: string;
+  maxComments: number;
+  sessionId: string;
+  cookieHeader: string;
+  proxyUrl: string | undefined;
+  request: GraphqlRequest;
+  logger: GraphqlLogger;
+}): Promise<RawComment[]> {
+  const { shortcode, maxComments, sessionId, cookieHeader, proxyUrl, request, logger } = params;
+  const results: RawComment[] = [];
+  let nextMinId: string | null = null;
+
+  const baseHeaders = buildInstagramMobileHeaders(sessionId, cookieHeader);
+
+  for (let page = 0; page < 20 && results.length < maxComments; page++) {
+    let url =
+      `https://i.instagram.com/api/v1/media/shortcode/${shortcode}/comments/` +
+      '?can_support_threading=true&permalink_enabled=true';
+    if (nextMinId) url += `&min_id=${encodeURIComponent(nextMinId)}`;
+
+    try {
+      const response = await request({
+        url,
+        method: 'GET',
+        headers: {
+          ...baseHeaders,
+          Accept: 'application/json',
+          'X-CSRFToken': extractCsrfToken(baseHeaders['Cookie'] ?? ''),
+          'X-IG-WWW-Claim': '0',
+          'X-Requested-With': 'com.instagram.android',
+        },
+        proxyUrl,
+        timeout: { request: 30000 },
+        retry: { limit: 0 },
+      });
+
+      const statusCode = response.statusCode;
+      if (statusCode === 404) break;
+      if (statusCode === 403 || statusCode === 401) {
+        logger.warning('Mobile REST comments blocked', { shortcode, statusCode });
+        break;
+      }
+      if (statusCode !== 200) {
+        logger.warning('Mobile REST comments unexpected status', { shortcode, statusCode });
+        break;
+      }
+
+      const payload = safeJsonParse(response.body?.toString() ?? '');
+      if (!payload || typeof payload !== 'object') break;
+
+      const obj = payload as Record<string, unknown>;
+      const items = (obj['comments'] as unknown[] | undefined) ?? [];
+
+      for (const item of items) {
+        const c = item as Record<string, unknown>;
+        const username =
+          (c['user'] as Record<string, unknown> | undefined)?.['username'] ?? '';
+        const text = c['text'] ?? '';
+        if (typeof username === 'string' && typeof text === 'string' && username && text) {
+          results.push({ username, text });
+        }
+      }
+
+      const hasMore = Boolean(obj['has_more_comments'] ?? obj['has_more_headload_comments']);
+      const nextId = obj['next_min_id'] ?? obj['next_max_id'];
+      if (!hasMore || typeof nextId !== 'string') break;
+      nextMinId = nextId;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warning('Mobile REST shortcode request error', { shortcode, error: msg });
+      break;
+    }
+  }
+
+  if (results.length > 0) {
+    logger.info('Mobile REST strategy succeeded', {
+      shortcode,
+      count: results.length,
+    });
+  }
+
+  return results.slice(0, maxComments);
+}
+
 function parseGraphqlComments(data: unknown): {
   comments: RawComment[];
   hasNextPage: boolean;
@@ -361,4 +461,38 @@ function safeJsonParse(raw: string): unknown | null {
 function extractCsrfToken(cookieHeader: string): string {
   const match = cookieHeader.match(/csrftoken=([^;]+)/);
   return match?.[1] ?? '';
+}
+
+function buildInstagramMobileHeaders(
+  sessionId: string,
+  cookieOverride?: string,
+): Record<string, string> {
+  const userAgent =
+    'Instagram 312.0.0.0.0 Android (33/13; 420dpi; 1080x2400; samsung; SM-G998B; p3s; exynos2200; en_US; 545969345)';
+  const deviceId = createDeviceId();
+  const androidId = `android-${randomBytes(8).toString('hex')}`;
+  const cookieHeader = cookieOverride ?? `sessionid=${sessionId};`;
+
+  return {
+    Cookie: cookieHeader,
+    'User-Agent': userAgent,
+    'X-IG-App-ID': '936619743392459',
+    'X-IG-Device-ID': deviceId,
+    'X-IG-Android-ID': androidId,
+    'X-IG-Connection-Type': 'WIFI',
+    'X-IG-Connection-Speed': '2200kbps',
+    'X-IG-Capabilities': '3brTvw==',
+    Accept: '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    Referer: 'https://www.instagram.com/',
+  };
+}
+
+function createDeviceId(): string {
+  try {
+    return randomUUID();
+  } catch {
+    return `${randomBytes(16).toString('hex')}`;
+  }
 }
