@@ -231,9 +231,9 @@ async function processLeads(input: NormalizedInput): Promise<{
       requestQueue,
       maxConcurrency: 4,
       maxRequestsPerMinute: 20,
-      maxRequestRetries: 5,
+      maxRequestRetries: 1,
       retryOnBlocked: true,
-      requestHandlerTimeoutSecs: 60,
+      requestHandlerTimeoutSecs: 180,
       preNavigationHooks: [
         ({ request }) => {
           request.headers = {
