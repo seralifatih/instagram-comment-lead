@@ -301,12 +301,18 @@ async function processLeads(input: NormalizedInput): Promise<{
           if (csrfFromHtml) {
             cookieHeader = mergeCookieHeader(cookieHeader, `csrftoken=${csrfFromHtml};`);
           }
+          const userId = extractUserIdFromHtml(rawBody);
+          if (userId) {
+            cookieHeader = mergeCookieHeader(cookieHeader, `ds_user_id=${userId};`);
+          }
+          const lsdToken = extractLsdTokenFromHtml(rawBody);
           const graphqlComments = await fetchGraphqlComments({
             shortcode,
             maxComments: input.maxCommentsPerPost,
             sessionId: input.sessionId,
             proxyConfiguration,
             cookieHeader,
+            lsdToken,
           });
           if (graphqlComments.length > 0) {
             log.info('GraphQL fallback returned comments', {
@@ -540,12 +546,25 @@ function extractCsrfTokenFromHtml(html: string): string | null {
   return match?.[1] ?? null;
 }
 
+function extractLsdTokenFromHtml(html: string): string | null {
+  const match = html.match(/\"LSD\"[\\s\\S]*?\"token\"\\s*:\\s*\"([^\"]+)\"/);
+  return match?.[1] ?? null;
+}
+
+function extractUserIdFromHtml(html: string): string | null {
+  const match =
+    html.match(/\"NON_FACEBOOK_USER_ID\"\\s*:\\s*\"(\\d+)\"/) ??
+    html.match(/\"IG_USER_EIMU\"\\s*:\\s*\"(\\d+)\"/);
+  return match?.[1] ?? null;
+}
+
 async function fetchGraphqlComments(params: {
   shortcode: string;
   maxComments: number;
   sessionId: string;
   proxyConfiguration: Awaited<ReturnType<typeof Actor.createProxyConfiguration>>;
   cookieHeader?: string;
+  lsdToken?: string | null;
 }): Promise<Array<{ username: string; text: string }>> {
   return fetchGraphqlCommentsImpl({
     ...params,

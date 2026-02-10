@@ -72,6 +72,7 @@ export async function fetchGraphqlComments(params: {
   request: GraphqlRequest;
   logger: GraphqlLogger;
   cookieHeader?: string;
+  lsdToken?: string | null;
 }): Promise<RawComment[]> {
   const {
     shortcode,
@@ -81,6 +82,7 @@ export async function fetchGraphqlComments(params: {
     request,
     logger,
     cookieHeader,
+    lsdToken,
   } = params;
 
   let proxyUrl: string | undefined;
@@ -100,6 +102,7 @@ export async function fetchGraphqlComments(params: {
     proxyUrl,
     request,
     logger,
+    lsdToken,
   });
   if (graphqlResult.length > 0) return graphqlResult;
 
@@ -174,8 +177,9 @@ async function tryGraphqlStrategy(params: {
   proxyUrl: string | undefined;
   request: GraphqlRequest;
   logger: GraphqlLogger;
+  lsdToken?: string | null;
 }): Promise<RawComment[]> {
-  const { shortcode, maxComments, headers, proxyUrl, request, logger } = params;
+  const { shortcode, maxComments, headers, proxyUrl, request, logger, lsdToken } = params;
   const endpoint = 'https://www.instagram.com/graphql/query/';
   const pageSize = Math.min(50, Math.max(10, maxComments));
 
@@ -191,6 +195,7 @@ async function tryGraphqlStrategy(params: {
         doc_id: docId,
         variables: JSON.stringify(variables),
       });
+      if (lsdToken) body.set('lsd', lsdToken);
 
       try {
         const response = await request({
@@ -202,6 +207,7 @@ async function tryGraphqlStrategy(params: {
             'Content-Type': 'application/x-www-form-urlencoded',
             'X-CSRFToken': extractCsrfToken(headers['Cookie'] ?? ''),
             'X-IG-WWW-Claim': '0',
+            ...(lsdToken ? { 'X-FB-LSD': lsdToken } : {}),
           },
           proxyUrl,
           http2: false,
@@ -281,6 +287,9 @@ async function tryRestShortcodeStrategy(params: {
         headers: {
           ...headers,
           Accept: 'application/json',
+          'X-IG-WWW-Claim': '0',
+          'X-ASBD-ID': '198387',
+          'X-FB-HTTP-Engine': 'Liger',
         },
         proxyUrl,
         http2: false,
