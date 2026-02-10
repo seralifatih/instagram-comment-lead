@@ -300,6 +300,11 @@ async function processLeads(input: NormalizedInput): Promise<{
         });
         const sourceUrl = (request.userData?.sourceUrl as string | undefined) ?? request.url;
         const { post, comments } = parsePost(rawBody);
+        if (comments.length === 0) {
+          const key = `DEBUG_HTML_${request.userData.shortcode || 'unknown'}`;
+          await Actor.setValue(key, rawBody, { contentType: 'text/html' });
+          log.warning(`Zero comments found. Saved HTML to Key-Value Store: ${key}`);
+        }
         const shortcode = extractShortcode(sourceUrl);
         let finalComments = comments;
         if (finalComments.length === 0 && shortcode) {

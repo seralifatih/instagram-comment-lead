@@ -42,6 +42,19 @@ export function parsePost(html: string): ParseResult {
 export function parseHtmlResponse(html: string): ParseResult {
   if (!html) return { comments: [] };
 
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch?.[1]?.trim() ?? '';
+  if (title.toLowerCase().includes('login')) {
+    throw new Error('LOGIN_WALL_DETECTED');
+  }
+
+  if (
+    !html.includes('edge_media_to_parent_comment') &&
+    !html.includes('edge_media_to_comment')
+  ) {
+    console.warn('HTML_MISSING_DATA_KEYS');
+  }
+
   const xdtData = extractXdtJson(html);
   if (xdtData) {
     const parsed = parseXdtJson(xdtData);
@@ -59,6 +72,9 @@ export function parseHtmlResponse(html: string): ParseResult {
     const parsed = parseInstagramJson(sharedData);
     if (parsed.post || parsed.comments.length > 0) return parsed;
   }
+
+  const dirty = extractCommentsFromDirtyHtml(html);
+  if (dirty.comments.length > 0) return dirty;
 
   return { comments: [] };
 }
@@ -190,4 +206,63 @@ function parseXdtJson(data: unknown): ParseResult {
   }
 
   return { post, comments };
+}
+
+function extractCommentsFromDirtyHtml(html: string): ParseResult {
+  const candidates: Comment[] = [];
+  const seen = new Set<string>();
+
+  const uiPhrases = new Set([
+    'log in',
+    'log in to instagram',
+    'sign up',
+    'instagram',
+    'sign up for instagram',
+    'create account',
+    'open in app',
+  ]);
+
+  const textRegex = /"text"\s*:\s*"([^"]*)"/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = textRegex.exec(html)) !== null) {
+    const raw = match[1] ?? '';
+    const decoded = raw
+      .replace(/\\u003c/g, '<')
+      .replace(/\\u003e/g, '>')
+      .replace(/\\u0026/g, '&')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    const normalized = decoded.trim();
+    if (!normalized) continue;
+    if (uiPhrases.has(normalized.toLowerCase())) continue;
+    if (normalized.length > 400) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    candidates.push({ username: '', text: normalized });
+  }
+
+  const requireLazyParsed = extractRequireLazyShortcodeMedia(html);
+  if (requireLazyParsed.comments.length > 0 || requireLazyParsed.post) {
+    return {
+      post: requireLazyParsed.post,
+      comments: requireLazyParsed.comments.length > 0 ? requireLazyParsed.comments : candidates,
+    };
+  }
+
+  return { comments: candidates };
+}
+
+function extractRequireLazyShortcodeMedia(html: string): ParseResult {
+  const regex = /"shortcode_media"\s*:\s*(\{[\s\S]*?\})\s*(?:,|\})/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(html)) !== null) {
+    const raw = match[1];
+    if (!raw) continue;
+    const parsed = safeJsonParse(raw);
+    if (!parsed) continue;
+    const wrapped = { graphql: { shortcode_media: parsed } };
+    const result = parseInstagramJson(wrapped);
+    if (result.post || result.comments.length > 0) return result;
+  }
+  return { comments: [] };
 }
