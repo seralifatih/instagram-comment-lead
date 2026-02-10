@@ -293,10 +293,14 @@ async function processLeads(input: NormalizedInput): Promise<{
 
         if (finalComments.length === 0 && shortcode) {
           const setCookieHeader = response?.headers?.['set-cookie'];
-          const cookieHeader = mergeCookieHeader(
+          let cookieHeader = mergeCookieHeader(
             `sessionid=${input.sessionId};`,
             setCookieHeader,
           );
+          const csrfFromHtml = extractCsrfTokenFromHtml(rawBody);
+          if (csrfFromHtml) {
+            cookieHeader = mergeCookieHeader(cookieHeader, `csrftoken=${csrfFromHtml};`);
+          }
           const graphqlComments = await fetchGraphqlComments({
             shortcode,
             maxComments: input.maxCommentsPerPost,
@@ -529,6 +533,11 @@ function maskSessionId(sessionId: string): string {
 
 function mergeCookieHeader(baseCookie: string, setCookie?: string | string[]): string {
   return mergeCookieHeaderImpl(baseCookie, setCookie);
+}
+
+function extractCsrfTokenFromHtml(html: string): string | null {
+  const match = html.match(/\"csrf_token\"\\s*:\\s*\"([^\"]+)\"/);
+  return match?.[1] ?? null;
 }
 
 async function fetchGraphqlComments(params: {

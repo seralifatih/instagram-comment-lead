@@ -46,6 +46,7 @@ export type GraphqlRequest = (params: {
   body?: string;
   headers: Record<string, string>;
   proxyUrl?: string;
+  http2?: boolean;
   timeout: { request: number };
   retry: { limit: number };
 }) => Promise<{
@@ -200,8 +201,10 @@ async function tryGraphqlStrategy(params: {
             ...headers,
             'Content-Type': 'application/x-www-form-urlencoded',
             'X-CSRFToken': extractCsrfToken(headers['Cookie'] ?? ''),
+            'X-IG-WWW-Claim': '0',
           },
           proxyUrl,
+          http2: false,
           timeout: { request: 30000 },
           retry: { limit: 0 },
         });
@@ -280,6 +283,7 @@ async function tryRestShortcodeStrategy(params: {
           Accept: 'application/json',
         },
         proxyUrl,
+        http2: false,
         timeout: { request: 30000 },
         retry: { limit: 0 },
       });
@@ -368,8 +372,11 @@ async function tryMobileRestStrategy(params: {
           'X-CSRFToken': extractCsrfToken(baseHeaders['Cookie'] ?? ''),
           'X-IG-WWW-Claim': '0',
           'X-Requested-With': 'com.instagram.android',
+          'X-ASBD-ID': '198387',
+          'X-FB-HTTP-Engine': 'Liger',
         },
         proxyUrl,
+        http2: false,
         timeout: { request: 30000 },
         retry: { limit: 0 },
       });
