@@ -205,6 +205,7 @@ async function processLeads(input: NormalizedInput): Promise<{
   // Collect ALL scored records (not just qualifying leads) for analytics
   const allScoredRecords: LeadRecord[] = [];
   const qualifiedLeadRecords: LeadRecord[] = [];
+  const qualifiedDedup = new Set<string>();
 
   let finalResult: {
     postUrls: string[];
@@ -393,7 +394,9 @@ async function processLeads(input: NormalizedInput): Promise<{
             sentiment_score: sentimentResult.sentiment_score,
           });
 
-          if (scored.score >= input.minLeadScore) {
+          const leadKey = `${comment.username}::${comment.text}`;
+          if (scored.score >= input.minLeadScore && !qualifiedDedup.has(leadKey)) {
+            qualifiedDedup.add(leadKey);
             qualifiedLeadRecords.push({
               url: sourceUrl,
               username: comment.username,
@@ -408,11 +411,9 @@ async function processLeads(input: NormalizedInput): Promise<{
 
           if (scored.score < input.minLeadScore) continue;
 
-          totalLeads += 1;
-
-          const leadKey = `${comment.username}::${comment.text}`;
           if (leadDedup.has(leadKey)) continue;
           leadDedup.add(leadKey);
+          totalLeads += 1;
 
           const lead: Lead = buildLead({
             username: comment.username,
