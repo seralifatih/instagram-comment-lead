@@ -200,6 +200,7 @@ async function processLeads(input: NormalizedInput): Promise<{
   const perPostMeta: Array<Record<string, unknown>> = [];
   const allComments: Array<{ url: string; username: string; text: string }> = [];
   const allLeads: Lead[] = [];
+  const leadDedup = new Set<string>();
 
   // Collect ALL scored records (not just qualifying leads) for analytics
   const allScoredRecords: LeadRecord[] = [];
@@ -408,6 +409,10 @@ async function processLeads(input: NormalizedInput): Promise<{
           if (scored.score < input.minLeadScore) continue;
 
           totalLeads += 1;
+
+          const leadKey = `${comment.username}::${comment.text}`;
+          if (leadDedup.has(leadKey)) continue;
+          leadDedup.add(leadKey);
 
           const lead: Lead = buildLead({
             username: comment.username,
