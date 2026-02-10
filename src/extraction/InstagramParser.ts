@@ -21,6 +21,9 @@ export interface ParseResult {
 export function parsePost(html: string): ParseResult {
   if (!html) return { comments: [] };
 
+  const htmlParsed = parseHtmlResponse(html);
+  if (htmlParsed.post || htmlParsed.comments.length > 0) return htmlParsed;
+
   const directJson = safeJsonParse(html);
   if (directJson) {
     const parsed = parseInstagramJson(directJson);
@@ -30,6 +33,30 @@ export function parsePost(html: string): ParseResult {
   const embeddedJson = extractEmbeddedJson(html);
   if (embeddedJson) {
     const parsed = parseInstagramJson(embeddedJson);
+    if (parsed.post || parsed.comments.length > 0) return parsed;
+  }
+
+  return { comments: [] };
+}
+
+export function parseHtmlResponse(html: string): ParseResult {
+  if (!html) return { comments: [] };
+
+  const xdtData = extractXdtJson(html);
+  if (xdtData) {
+    const parsed = parseXdtJson(xdtData);
+    if (parsed.post || parsed.comments.length > 0) return parsed;
+  }
+
+  const additionalData = extractAdditionalDataJson(html);
+  if (additionalData) {
+    const parsed = parseInstagramJson(additionalData);
+    if (parsed.post || parsed.comments.length > 0) return parsed;
+  }
+
+  const sharedData = extractSharedDataJson(html);
+  if (sharedData) {
+    const parsed = parseInstagramJson(sharedData);
     if (parsed.post || parsed.comments.length > 0) return parsed;
   }
 
@@ -50,26 +77,12 @@ function safeJsonParse(raw: string): unknown | null {
 }
 
 function extractEmbeddedJson(body: string): unknown | null {
-  const sharedDataMatch = body.match(/window\._sharedData\s*=\s*(\{[\s\S]*?\});/);
-  if (sharedDataMatch?.[1]) {
-    return safeJsonParse(sharedDataMatch[1]);
-  }
-
-  const nextDataMatch = body.match(
-    /<script type="application\/json" id="__NEXT_DATA__">([\s\S]*?)<\/script>/,
+  return (
+    extractXdtJson(body) ??
+    extractAdditionalDataJson(body) ??
+    extractSharedDataJson(body) ??
+    extractNextDataJson(body)
   );
-  if (nextDataMatch?.[1]) {
-    return safeJsonParse(nextDataMatch[1]);
-  }
-
-  const additionalDataMatch = body.match(
-    /window\.__additionalDataLoaded\([^,]+,\s*([\s\S]*?)\);/,
-  );
-  if (additionalDataMatch?.[1]) {
-    return safeJsonParse(additionalDataMatch[1]);
-  }
-
-  return null;
 }
 
 function parseInstagramJson(data: unknown): ParseResult {
@@ -111,6 +124,68 @@ function parseInstagramJson(data: unknown): ParseResult {
     const node = edge?.node ?? edge;
     const username = node?.owner?.username ?? node?.user?.username ?? '';
     const text = node?.text ?? '';
+    if (username && text) comments.push({ username, text });
+  }
+
+  return { post, comments };
+}
+
+function extractXdtJson(html: string): unknown | null {
+  const match = html.match(
+    /<script[^>]*type="application\/json"[^>]*>\s*({[\s\S]*?})\s*<\/script>/,
+  );
+  if (!match?.[1]) return null;
+  const parsed = safeJsonParse(match[1]);
+  const hasXdt =
+    (parsed as any)?.data?.xdt_api__v1__media__shortcode__web_info ??
+    (parsed as any)?.xdt_api__v1__media__shortcode__web_info;
+  return hasXdt ? parsed : null;
+}
+
+function extractAdditionalDataJson(html: string): unknown | null {
+  const additionalDataMatch = html.match(
+    /window\.__additionalDataLoaded\([^,]+,\s*([\s\S]*?)\);/,
+  );
+  if (!additionalDataMatch?.[1]) return null;
+  return safeJsonParse(additionalDataMatch[1]);
+}
+
+function extractSharedDataJson(html: string): unknown | null {
+  const sharedDataMatch = html.match(/window\._sharedData\s*=\s*(\{[\s\S]*?\});/);
+  if (!sharedDataMatch?.[1]) return null;
+  return safeJsonParse(sharedDataMatch[1]);
+}
+
+function extractNextDataJson(html: string): unknown | null {
+  const nextDataMatch = html.match(
+    /<script type="application\/json" id="__NEXT_DATA__">([\s\S]*?)<\/script>/,
+  );
+  if (!nextDataMatch?.[1]) return null;
+  return safeJsonParse(nextDataMatch[1]);
+}
+
+function parseXdtJson(data: unknown): ParseResult {
+  const comments: Comment[] = [];
+  const media =
+    (data as any)?.data?.xdt_api__v1__media__shortcode__web_info?.items?.[0] ??
+    (data as any)?.xdt_api__v1__media__shortcode__web_info?.items?.[0];
+
+  if (!media) return { comments };
+
+  const post: Post = {
+    id: media.id ?? null,
+    shortcode: media.code ?? media.shortcode ?? null,
+    caption: media?.caption?.text ?? null,
+    likeCount: media?.like_count ?? null,
+    commentCount: media?.comment_count ?? null,
+    timestamp: media?.taken_at ?? null,
+    ownerUsername: media?.user?.username ?? null,
+  };
+
+  const commentItems = media?.comments ?? media?.preview_comments ?? [];
+  for (const item of commentItems) {
+    const username = item?.user?.username ?? '';
+    const text = item?.text ?? '';
     if (username && text) comments.push({ username, text });
   }
 

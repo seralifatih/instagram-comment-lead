@@ -1,23 +1,20 @@
 export function toInstagramApiUrl(url: string): string {
   const trimmed = url.split('?')[0] ?? url;
   const normalized = trimmed.replace(/\/+$/, '');
-  return `${normalized}/?__a=1&__d=dis`;
+  const match = normalized.match(/instagram\.com\/(?:p|reel)\/([^/?#]+)/);
+  if (!match?.[1]) return normalized.endsWith('/') ? normalized : `${normalized}/`;
+  return `https://www.instagram.com/p/${match[1]}/`;
 }
 
 export function buildInstagramHeaders(sessionId: string): Record<string, string> {
-  const userAgents = [
-    'Instagram 312.0.0.0.0 Android',
-    'Instagram 312.0.0.0.0 Android (30/11; 420dpi; 1080x2340; samsung; SM-G975F; beyond2; exynos9820; en_US; 522043675)',
-    'Instagram 312.0.0.0.0 Android (29/10; 320dpi; 720x1520; Xiaomi; Redmi Note 7; lavender; qcom; en_US; 522043675)',
-    'Instagram 312.0.0.0.0 Android (28/9; 480dpi; 1080x1920; OnePlus; ONEPLUS A6013; OnePlus6T; qcom; en_US; 522043675)',
-  ];
+  const userAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   const languages = [
     'en-US,en;q=0.9',
     'en-US,en;q=0.8',
     'en-GB,en;q=0.8',
   ];
   const acceptEncodings = ['gzip, deflate, br', 'gzip, br'];
-  const ua = userAgents[Math.floor(Math.random() * userAgents.length)] || userAgents[0] || '';
   const lang = languages[Math.floor(Math.random() * languages.length)] || languages[0] || '';
   const enc =
     acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)] ||
@@ -25,7 +22,7 @@ export function buildInstagramHeaders(sessionId: string): Record<string, string>
     '';
   return {
     Cookie: `sessionid=${sessionId};`,
-    'User-Agent': ua,
+    'User-Agent': userAgent,
     'X-IG-App-ID': '936619743392459',
     Accept: '*/*',
     'Accept-Language': lang,
