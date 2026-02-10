@@ -48,12 +48,14 @@ export function parseHtmlResponse(html: string): ParseResult {
     throw new Error('LOGIN_WALL_DETECTED');
   }
 
-  if (
-    !html.includes('edge_media_to_parent_comment') &&
-    !html.includes('edge_media_to_comment')
-  ) {
-    console.warn('HTML_MISSING_DATA_KEYS');
-  }
+  const bboxResult = extractBboxJson(html);
+  if (bboxResult.comments.length > 0 || bboxResult.post) return bboxResult;
+
+  const requireResult = extractRequireDefineComments(html);
+  if (requireResult.comments.length > 0 || requireResult.post) return requireResult;
+
+  const polarisResult = extractPolarisSharedData(html);
+  if (polarisResult.comments.length > 0 || polarisResult.post) return polarisResult;
 
   const xdtData = extractXdtJson(html);
   if (xdtData) {
@@ -73,6 +75,18 @@ export function parseHtmlResponse(html: string): ParseResult {
     if (parsed.post || parsed.comments.length > 0) return parsed;
   }
 
+  const hasAnyKey =
+    html.includes('edge_media_to_parent_comment') ||
+    html.includes('edge_media_to_comment') ||
+    html.includes('xdt_api__v1') ||
+    html.includes('__bbox') ||
+    html.includes('preview_comments') ||
+    html.includes('"comments":[');
+
+  if (!hasAnyKey) {
+    console.warn('HTML_MISSING_DATA_KEYS');
+  }
+
   const dirty = extractCommentsFromDirtyHtml(html);
   if (dirty.comments.length > 0) return dirty;
 
@@ -82,6 +96,157 @@ export function parseHtmlResponse(html: string): ParseResult {
 export function extractShortcode(url: string): string | null {
   const match = url.match(/instagram\.com\/(?:p|reel)\/([^/?#]+)/);
   return match?.[1] ?? null;
+}
+
+const MAX_DEPTH = 14;
+const MAX_COMMENTS_PER_CALL = 500;
+
+function extractBboxJson(html: string): ParseResult {
+  const bboxMatches = html.matchAll(
+    /(?:__bbox|__eqmc)\s*=\s*(\{[\s\S]{20,600000}\})\s*;/g,
+  );
+  for (const m of bboxMatches) {
+    if (!m[1]) continue;
+    const data = safeJsonParse(m[1]);
+    if (!data) continue;
+    const result = deepSearchComments(data);
+    if (result.comments.length > 0 || result.post) return result;
+  }
+
+  const applyMatches = html.matchAll(
+    /handleWithCustomApplyEach\(\s*(\[[\s\S]{10,400000}?\])\s*\)/g,
+  );
+  for (const m of applyMatches) {
+    if (!m[1]) continue;
+    const data = safeJsonParse(m[1]);
+    if (!data) continue;
+    const result = deepSearchComments(data);
+    if (result.comments.length > 0 || result.post) return result;
+  }
+
+  return { comments: [] };
+}
+
+function extractRequireDefineComments(html: string): ParseResult {
+  const scriptBlocks: string[] = [];
+
+  const scriptRegex =
+    /<script[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = scriptRegex.exec(html)) !== null) {
+    if (match[1] && match[1].length > 100) scriptBlocks.push(match[1]);
+  }
+
+  const inlineJsonRegex =
+    /(?:self\.__next_f|globalThis\.__RELAY_STORE__|window\.FB_DATA)\s*=\s*(\{[\s\S]{500,}\})/g;
+  while ((match = inlineJsonRegex.exec(html)) !== null) {
+    if (match[1]) scriptBlocks.push(match[1]);
+  }
+
+  for (const block of scriptBlocks) {
+    const data = safeJsonParse(block);
+    if (!data) continue;
+    const result = deepSearchComments(data);
+    if (result.comments.length > 0 || result.post) return result;
+  }
+
+  return { comments: [] };
+}
+
+function extractPolarisSharedData(html: string): ParseResult {
+  const polarisMatch = html.match(
+    /"(?:PolarisPostRootWithSharedData|PolarisPostAction)"[,\s]*(\{[\s\S]{50,500000}\})\s*(?:\]|\))/, 
+  );
+  if (polarisMatch?.[1]) {
+    const data = safeJsonParse(polarisMatch[1]);
+    if (data) {
+      const result = deepSearchComments(data);
+      if (result.comments.length > 0 || result.post) return result;
+    }
+  }
+  return { comments: [] };
+}
+
+function deepSearchComments(data: unknown, depth = 0): ParseResult {
+  if (depth > MAX_DEPTH || data === null || typeof data !== 'object') {
+    return { comments: [] };
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  const text = obj['text'];
+  const owner = obj['owner'] as Record<string, unknown> | undefined;
+  const user = obj['user'] as Record<string, unknown> | undefined;
+  const username =
+    (typeof owner?.['username'] === 'string' ? owner['username'] : undefined) ??
+    (typeof user?.['username'] === 'string' ? user['username'] : undefined) ??
+    (typeof obj['username'] === 'string' ? obj['username'] : undefined);
+
+  if (typeof text === 'string' && text.length > 0 && username) {
+    return { comments: [{ username, text }] };
+  }
+
+  const commentArrayKeys = [
+    'comments',
+    'preview_comments',
+    'edges',
+    'edge_media_to_parent_comment',
+    'edge_media_to_comment',
+  ];
+
+  for (const key of commentArrayKeys) {
+    const val = obj[key];
+    if (key === 'edge_media_to_parent_comment' || key === 'edge_media_to_comment') {
+      const edgesVal = (val as Record<string, unknown> | undefined)?.['edges'];
+      if (Array.isArray(edgesVal) && edgesVal.length > 0) {
+        const comments = extractFromEdges(edgesVal, depth);
+        if (comments.length > 0) {
+          return { comments };
+        }
+      }
+    }
+    if (!Array.isArray(val) || val.length === 0) continue;
+    const comments = extractFromEdges(val, depth);
+    if (comments.length > 0) return { comments };
+  }
+
+  const xdtMedia =
+    (obj as any)?.data?.xdt_api__v1__media__shortcode__web_info?.items?.[0] ??
+    (obj as any)?.xdt_api__v1__media__shortcode__web_info?.items?.[0];
+  if (xdtMedia) {
+    const r = deepSearchComments(xdtMedia, depth + 1);
+    if (r.comments.length > 0 || r.post) return r;
+  }
+
+  const allComments: Comment[] = [];
+  const seen = new Set<string>();
+  let foundPost: Post | undefined;
+
+  for (const value of Object.values(obj)) {
+    if (allComments.length >= MAX_COMMENTS_PER_CALL) break;
+    if (typeof value !== 'object' || value === null) continue;
+    const r = deepSearchComments(value, depth + 1);
+    for (const c of r.comments) {
+      const key = `${c.username}::${c.text}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        allComments.push(c);
+      }
+    }
+    if (r.post && !foundPost) foundPost = r.post;
+  }
+
+  return { post: foundPost, comments: allComments };
+}
+
+function extractFromEdges(edges: unknown[], depth: number): Comment[] {
+  const comments: Comment[] = [];
+  for (const item of edges) {
+    const node: unknown = (item as Record<string, unknown>)?.['node'] ?? item;
+    const r = deepSearchComments(node, depth + 1);
+    comments.push(...r.comments);
+  }
+  return comments;
 }
 
 function safeJsonParse(raw: string): unknown | null {
@@ -112,25 +277,14 @@ function parseInstagramJson(data: unknown): ParseResult {
     (data as any)?.entry_data?.PostPage?.[0]?.graphql?.shortcode_media ??
     (data as any)?.entry_data?.PostPage?.[0]?.items?.[0];
 
-  if (!media) {
-    return { comments };
-  }
+  if (!media) return { comments };
 
   const post: Post = {
     id: media.id ?? null,
     shortcode: media.shortcode ?? null,
-    caption:
-      media?.edge_media_to_caption?.edges?.[0]?.node?.text ??
-      media?.caption?.text ??
-      null,
-    likeCount:
-      media?.edge_media_preview_like?.count ??
-      media?.like_count ??
-      null,
-    commentCount:
-      media?.edge_media_to_parent_comment?.count ??
-      media?.comment_count ??
-      null,
+    caption: media?.edge_media_to_caption?.edges?.[0]?.node?.text ?? media?.caption?.text ?? null,
+    likeCount: media?.edge_media_preview_like?.count ?? media?.like_count ?? null,
+    commentCount: media?.edge_media_to_parent_comment?.count ?? media?.comment_count ?? null,
     timestamp: media?.taken_at_timestamp ?? media?.taken_at ?? null,
     ownerUsername: media?.owner?.username ?? media?.user?.username ?? null,
   };
@@ -159,25 +313,23 @@ function extractXdtJson(html: string): unknown | null {
 }
 
 function extractAdditionalDataJson(html: string): unknown | null {
-  const additionalDataMatch = html.match(
-    /window\.__additionalDataLoaded\([^,]+,\s*([\s\S]*?)\);/,
-  );
-  if (!additionalDataMatch?.[1]) return null;
-  return safeJsonParse(additionalDataMatch[1]);
+  const m = html.match(/window\.__additionalDataLoaded\([^,]+,\s*([\s\S]*?)\);/);
+  if (!m?.[1]) return null;
+  return safeJsonParse(m[1]);
 }
 
 function extractSharedDataJson(html: string): unknown | null {
-  const sharedDataMatch = html.match(/window\._sharedData\s*=\s*(\{[\s\S]*?\});/);
-  if (!sharedDataMatch?.[1]) return null;
-  return safeJsonParse(sharedDataMatch[1]);
+  const m = html.match(/window\._sharedData\s*=\s*(\{[\s\S]*?\});/);
+  if (!m?.[1]) return null;
+  return safeJsonParse(m[1]);
 }
 
 function extractNextDataJson(html: string): unknown | null {
-  const nextDataMatch = html.match(
+  const m = html.match(
     /<script type="application\/json" id="__NEXT_DATA__">([\s\S]*?)<\/script>/,
   );
-  if (!nextDataMatch?.[1]) return null;
-  return safeJsonParse(nextDataMatch[1]);
+  if (!m?.[1]) return null;
+  return safeJsonParse(m[1]);
 }
 
 function parseXdtJson(data: unknown): ParseResult {
@@ -233,36 +385,12 @@ function extractCommentsFromDirtyHtml(html: string): ParseResult {
       .replace(/\\"/g, '"')
       .replace(/\\\\/g, '\\');
     const normalized = decoded.trim();
-    if (!normalized) continue;
-    if (uiPhrases.has(normalized.toLowerCase())) continue;
+    if (!normalized || uiPhrases.has(normalized.toLowerCase())) continue;
     if (normalized.length > 400) continue;
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     candidates.push({ username: '', text: normalized });
   }
 
-  const requireLazyParsed = extractRequireLazyShortcodeMedia(html);
-  if (requireLazyParsed.comments.length > 0 || requireLazyParsed.post) {
-    return {
-      post: requireLazyParsed.post,
-      comments: requireLazyParsed.comments.length > 0 ? requireLazyParsed.comments : candidates,
-    };
-  }
-
   return { comments: candidates };
-}
-
-function extractRequireLazyShortcodeMedia(html: string): ParseResult {
-  const regex = /"shortcode_media"\s*:\s*(\{[\s\S]*?\})\s*(?:,|\})/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = regex.exec(html)) !== null) {
-    const raw = match[1];
-    if (!raw) continue;
-    const parsed = safeJsonParse(raw);
-    if (!parsed) continue;
-    const wrapped = { graphql: { shortcode_media: parsed } };
-    const result = parseInstagramJson(wrapped);
-    if (result.post || result.comments.length > 0) return result;
-  }
-  return { comments: [] };
 }
