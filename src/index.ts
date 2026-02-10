@@ -8,6 +8,15 @@
  *
  * Runtime sequence (async, after Actor.init):
  *   4. Actor.getInput  → validate  → log  → processLeads  → exit
+ *
+ * v2.1 additions (lead gen value layer):
+ *   - Every lead record now includes sentiment scoring (positive/negative/neutral)
+ *     and a sentiment_score confidence value (0–1).
+ *   - Commercial score derived from intent weight + sentiment alignment.
+ *   - A full analytics summary is pushed as the final dataset item, covering:
+ *       top commenters, intent distribution, sentiment distribution,
+ *       top keywords, hourly comment trend, per-post breakdown,
+ *       and quality bucket counts (HIGH / MEDIUM / LOW).
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -25,12 +34,11 @@ import {
   toInstagramApiUrl as toInstagramApiUrlImpl,
 } from './extraction/InstagramApi.js';
 import { scoreLead as scoreLeadImpl } from './intelligence/LeadScorer.js';
+import { scoreSentiment } from './intelligence/SentimentScorer.js';
+import { buildSummary, type LeadRecord } from './intelligence/AnalyticsAggregator.js';
 import { createCrawler } from './core/CrawlerFactory.js';
 
 // ── structured pre-init logger ───────────────────────────────────────────
-// Before Actor.init(), crawlee's log isn't configured yet.  Emit newline-
-// delimited JSON directly so Apify's log collector (and any external
-// aggregator) can parse these boot lines without custom formatting.
 
 function emit(
   level: 'INFO' | 'FATAL',
@@ -42,16 +50,11 @@ function emit(
 }
 
 // ── boot-time sanity checks ──────────────────────────────────────────────
-// Run synchronously at module load, before any async work.  Goal: surface
-// misconfiguration immediately instead of failing deep in the pipeline.
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = dirname(__filename);
+const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
 
-// 1. Verify the compiled entrypoint exists at the expected path.
-//    This catches wrong-cwd launches, missing builds, and Docker COPY
-//    mistakes that would otherwise produce a cryptic MODULE_NOT_FOUND.
 const distEntry = join(PROJECT_ROOT, 'dist', 'index.js');
 if (!existsSync(distEntry)) {
   emit('FATAL', 'BUILD_MISSING', {
@@ -62,7 +65,6 @@ if (!existsSync(distEntry)) {
   process.exit(1);
 }
 
-// 2. Verify peer build artifacts (catches partial / interrupted tsc).
 const peerArtifact = join(__dirname, 'types', 'Input.js');
 if (!existsSync(peerArtifact)) {
   emit('FATAL', 'BUILD_INCOMPLETE', {
@@ -73,7 +75,6 @@ if (!existsSync(peerArtifact)) {
   process.exit(1);
 }
 
-// 3. Read build version from package.json (best-effort, never throws).
 function readPackageVersion(): string {
   try {
     const raw = readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf-8');
@@ -86,8 +87,6 @@ function readPackageVersion(): string {
 
 const BUILD_VERSION = readPackageVersion();
 
-// 4. Log startup environment — every field is a first-class key so log
-//    aggregators can filter runs by node version, build, etc.
 emit('INFO', 'Boot', {
   nodeVersion: process.version,
   buildVersion: BUILD_VERSION,
@@ -96,28 +95,34 @@ emit('INFO', 'Boot', {
   cwd: process.cwd(),
 });
 
+// ── commercial score helper ──────────────────────────────────────────────
+// Combines lead intent score with sentiment alignment.
+// Positive sentiment on a high-intent comment → elevated commercial value.
+// Negative sentiment → suppressed (complaints rarely convert).
+
+function computeCommercialScore(
+  intentScore: number,
+  sentimentScore: number,
+  sentiment: 'positive' | 'negative' | 'neutral',
+): number {
+  const base = intentScore;
+  let modifier = 0;
+  if (sentiment === 'positive') modifier = +0.1 * sentimentScore;
+  else if (sentiment === 'negative') modifier = -0.15 * sentimentScore;
+  return parseFloat(Math.min(1, Math.max(0, base + modifier)).toFixed(3));
+}
+
 // ── main ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<{
   postsProcessed: number;
   totalComments: number;
   totalLeads: number;
-  leads: Array<{
-    url: string;
-    username: string;
-    text: string;
-    score: number;
-    intent: string;
-    matched_keywords: string[];
-  }>;
+  leads: EnrichedLead[];
 }> {
-  // 1. Load raw input
   const raw: unknown = await Actor.getInput();
-
-  // 2. Validate required fields, apply defaults, fail fast on mismatch
   const input = validateInput(raw);
 
-  // 3. Structured log of validated input — every field a first-class key
   log.info('Input validated', {
     buildVersion: BUILD_VERSION,
     postUrls: input.postUrls,
@@ -133,15 +138,16 @@ async function main(): Promise<{
     sessionIdMasked: maskSessionId(input.sessionId),
   });
 
-  // 4. Business logic
   const result = await processLeads(input);
 
   const comments = Array.isArray(result.comments) ? result.comments : [];
   const leads = Array.isArray(result.leads) ? result.leads : [];
+
   log.info('About to push dataset', {
     commentsCount: comments.length,
     leadsCount: leads.length,
   });
+
   try {
     await Actor.pushData({
       meta: {
@@ -175,9 +181,27 @@ async function main(): Promise<{
   return outputObject;
 }
 
+// ── enriched lead type ────────────────────────────────────────────────────
 
+type EnrichedLead = {
+  type: 'lead';
+  url: string;
+  username: string;
+  text: string;
+  // intent
+  score: number;
+  intent: string;
+  matched_keywords: string[];
+  // sentiment
+  sentiment: 'positive' | 'negative' | 'neutral';
+  sentiment_score: number;
+  positive_signals: string[];
+  negative_signals: string[];
+  // derived
+  commercial_score: number;
+};
 
-// ── business logic (stub) ────────────────────────────────────────────────
+// ── business logic ────────────────────────────────────────────────────────
 
 async function processLeads(input: NormalizedInput): Promise<{
   postUrls: string[];
@@ -185,14 +209,7 @@ async function processLeads(input: NormalizedInput): Promise<{
   totalComments: number;
   totalLeads: number;
   comments: Array<{ url: string; username: string; text: string }>;
-  leads: Array<{
-    url: string;
-    username: string;
-    text: string;
-    score: number;
-    intent: string;
-    matched_keywords: string[];
-  }>;
+  leads: EnrichedLead[];
 }> {
   log.info('Lead pipeline started', { urlCount: input.postUrls.length });
 
@@ -211,14 +228,10 @@ async function processLeads(input: NormalizedInput): Promise<{
   const queuedUrls: string[] = [];
   const perPostMeta: Array<Record<string, unknown>> = [];
   const allComments: Array<{ url: string; username: string; text: string }> = [];
-  const allLeads: Array<{
-    url: string;
-    username: string;
-    text: string;
-    score: number;
-    intent: string;
-    matched_keywords: string[];
-  }> = [];
+  const allLeads: EnrichedLead[] = [];
+
+  // Collect ALL scored records (not just qualifying leads) for analytics
+  const allScoredRecords: LeadRecord[] = [];
 
   let finalResult: {
     postUrls: string[];
@@ -226,14 +239,7 @@ async function processLeads(input: NormalizedInput): Promise<{
     totalComments: number;
     totalLeads: number;
     comments: Array<{ url: string; username: string; text: string }>;
-    leads: Array<{
-      url: string;
-      username: string;
-      text: string;
-      score: number;
-      intent: string;
-      matched_keywords: string[];
-    }>;
+    leads: EnrichedLead[];
   } = {
     postUrls: input.postUrls,
     postsProcessed: 0,
@@ -278,6 +284,7 @@ async function processLeads(input: NormalizedInput): Promise<{
         const isLoginRedirect = typeof location === 'string' && location.includes('login');
         const blocked =
           statusCode === 403 || statusCode === 429 || (statusCode === 302 && isLoginRedirect);
+
         if (blocked) {
           log.warning('Blocked response detected', {
             url: request.url,
@@ -287,6 +294,7 @@ async function processLeads(input: NormalizedInput): Promise<{
             responseHeaders: response?.headers ?? null,
           });
         }
+
         const responseBytes =
           typeof body === 'string'
             ? Buffer.byteLength(body)
@@ -298,15 +306,19 @@ async function processLeads(input: NormalizedInput): Promise<{
           statusCode,
           responseBytes,
         });
+
         const sourceUrl = (request.userData?.sourceUrl as string | undefined) ?? request.url;
         const { post, comments } = parsePost(rawBody);
+
         if (comments.length === 0) {
           const key = `DEBUG_HTML_${request.userData.shortcode || 'unknown'}`;
           await Actor.setValue(key, rawBody, { contentType: 'text/html' });
           log.warning(`Zero comments found. Saved HTML to Key-Value Store: ${key}`);
         }
+
         const shortcode = extractShortcode(sourceUrl);
         let finalComments = comments;
+
         if (finalComments.length === 0 && shortcode) {
           const graphqlComments = await fetchGraphqlComments({
             shortcode,
@@ -373,29 +385,56 @@ async function processLeads(input: NormalizedInput): Promise<{
         for (const comment of limitedComments) {
           if (targetReached) break;
 
+          // ── score intent ─────────────────────────────────────────────
           const scored = scoreLead(comment.text);
-          if (scored.score < input.minLeadScore) continue;
 
-          totalLeads += 1;
-          const lead = {
-            type: 'lead',
+          // ── score sentiment (always, for analytics coverage) ─────────
+          const sentimentResult = scoreSentiment(comment.text);
+
+          // ── compute commercial score ──────────────────────────────────
+          const commercial_score = computeCommercialScore(
+            scored.score,
+            sentimentResult.sentiment_score,
+            sentimentResult.sentiment,
+          );
+
+          // Accumulate every record for analytics regardless of score gate
+          allScoredRecords.push({
             url: sourceUrl,
             username: comment.username,
             text: comment.text,
             score: scored.score,
             intent: scored.intent,
             matched_keywords: scored.matched_keywords,
+            sentiment: sentimentResult.sentiment,
+            sentiment_score: sentimentResult.sentiment_score,
+          });
+
+          if (scored.score < input.minLeadScore) continue;
+
+          totalLeads += 1;
+
+          const lead: EnrichedLead = {
+            type: 'lead',
+            url: sourceUrl,
+            username: comment.username,
+            text: comment.text,
+            // intent
+            score: scored.score,
+            intent: scored.intent,
+            matched_keywords: scored.matched_keywords,
+            // sentiment
+            sentiment: sentimentResult.sentiment,
+            sentiment_score: sentimentResult.sentiment_score,
+            positive_signals: sentimentResult.positive_signals,
+            negative_signals: sentimentResult.negative_signals,
+            // derived
+            commercial_score,
           };
+
           await Actor.pushData(lead);
           leadsPushed += 1;
-          allLeads.push({
-            url: lead.url,
-            username: lead.username,
-            text: lead.text,
-            score: lead.score,
-            intent: lead.intent,
-            matched_keywords: lead.matched_keywords,
-          });
+          allLeads.push(lead);
 
           if (totalLeads >= input.targetLeads) {
             targetReached = true;
@@ -460,11 +499,38 @@ async function processLeads(input: NormalizedInput): Promise<{
     failureReason = err instanceof Error ? err.message : String(err);
     throw err;
   } finally {
+    // ── build and push analytics summary ─────────────────────────────
+    const analyticsSummary = buildSummary(
+      allScoredRecords,
+      allLeads.map((l) => ({
+        url: l.url,
+        username: l.username,
+        text: l.text,
+        score: l.score,
+        intent: l.intent,
+        matched_keywords: l.matched_keywords,
+        sentiment: l.sentiment,
+        sentiment_score: l.sentiment_score,
+      })),
+    );
+
+    await Actor.pushData(analyticsSummary);
+
+    log.info('Analytics summary pushed', {
+      total_comments: analyticsSummary.total_comments_processed,
+      total_leads: analyticsSummary.total_leads_found,
+      lead_rate_pct: analyticsSummary.lead_rate_pct,
+      avg_lead_score: analyticsSummary.avg_lead_score,
+      top_keywords: analyticsSummary.top_keywords.slice(0, 5).map((k) => k.keyword),
+      sentiment: analyticsSummary.sentiment_distribution,
+    });
+
     log.info('Dataset item counts', {
       postsPushed,
       leadsPushed,
       commentsPushed,
     });
+
     await Actor.pushData({
       type: 'summary',
       status,
@@ -482,7 +548,8 @@ async function processLeads(input: NormalizedInput): Promise<{
   return finalResult;
 }
 
-// wrappers kept in place during refactor
+// ── thin wrappers (kept for testability) ─────────────────────────────────
+
 function toInstagramApiUrl(url: string): string {
   return toInstagramApiUrlImpl(url);
 }
@@ -508,7 +575,6 @@ async function fetchGraphqlComments(params: {
   });
 }
 
-
 function scoreLead(text: string): { score: number; intent: string; matched_keywords: string[] } {
   return scoreLeadImpl(text);
 }
@@ -516,7 +582,6 @@ function scoreLead(text: string): { score: number; intent: string; matched_keywo
 function validateInput(raw: unknown): NormalizedInput {
   return validateInputImpl(raw);
 }
-
 
 // ── bootstrap ────────────────────────────────────────────────────────────
 
