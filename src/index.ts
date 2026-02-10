@@ -555,10 +555,12 @@ function buildInstagramHeaders(sessionId: string): Record<string, string> {
     'gzip, deflate, br',
     'gzip, br',
   ];
-  const ua = userAgents[Math.floor(Math.random() * userAgents.length)] ?? userAgents[0];
-  const lang = languages[Math.floor(Math.random() * languages.length)] ?? languages[0];
+  const ua = userAgents[Math.floor(Math.random() * userAgents.length)] || userAgents[0] || '';
+  const lang = languages[Math.floor(Math.random() * languages.length)] || languages[0] || '';
   const enc =
-    acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)] ?? acceptEncodings[0];
+    acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)] ||
+    acceptEncodings[0] ||
+    '';
   return {
     Cookie: `sessionid=${sessionId};`,
     'User-Agent': ua,
