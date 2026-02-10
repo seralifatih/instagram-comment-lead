@@ -423,7 +423,6 @@ async function processLeads(input: NormalizedInput): Promise<{
             minLeadScore: input.minLeadScore,
           });
 
-          await Actor.pushData(lead);
           leadsPushed += 1;
           allLeads.push(lead);
 
