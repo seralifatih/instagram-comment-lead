@@ -115,6 +115,7 @@ async function main(): Promise<{
     postUrls: input.postUrls,
     postUrlCount: input.postUrls.length,
     sessionIdMasked: maskSessionId(input.sessionId),
+    cookieProvided: Boolean(input.cookie),
     debugComments: input.debugComments,
     maxCommentsPerPost: input.maxCommentsPerPost,
     targetLeads: input.targetLeads,
@@ -237,7 +238,7 @@ async function processLeads(input: NormalizedInput): Promise<{
         ({ request }) => {
           request.headers = {
             ...(request.headers ?? {}),
-            ...buildInstagramHeaders(input.sessionId),
+            ...buildInstagramHeaders(input.sessionId, input.cookie || undefined),
           };
         },
       ],
@@ -293,10 +294,10 @@ async function processLeads(input: NormalizedInput): Promise<{
 
         if (finalComments.length === 0 && shortcode) {
           const setCookieHeader = response?.headers?.['set-cookie'];
-          let cookieHeader = mergeCookieHeader(
-            `sessionid=${input.sessionId};`,
-            setCookieHeader,
-          );
+          const baseCookie = input.cookie && input.cookie.trim().length > 0
+            ? input.cookie
+            : `sessionid=${input.sessionId};`;
+          let cookieHeader = mergeCookieHeader(baseCookie, setCookieHeader);
           const csrfFromHtml = extractCsrfTokenFromHtml(rawBody);
           if (csrfFromHtml) {
             cookieHeader = mergeCookieHeader(cookieHeader, `csrftoken=${csrfFromHtml};`);
@@ -443,7 +444,7 @@ async function processLeads(input: NormalizedInput): Promise<{
         url: apiUrl,
         label: 'POST_API',
         userData: { sourceUrl: url, shortcode },
-        headers: buildInstagramHeaders(input.sessionId),
+        headers: buildInstagramHeaders(input.sessionId, input.cookie || undefined),
       };
     });
 
@@ -529,8 +530,11 @@ function toInstagramApiUrl(url: string): string {
   return toInstagramApiUrlImpl(url);
 }
 
-function buildInstagramHeaders(sessionId: string): Record<string, string> {
-  return buildInstagramHeadersImpl(sessionId);
+function buildInstagramHeaders(
+  sessionId: string,
+  cookieOverride?: string,
+): Record<string, string> {
+  return buildInstagramHeadersImpl(sessionId, cookieOverride);
 }
 
 function maskSessionId(sessionId: string): string {

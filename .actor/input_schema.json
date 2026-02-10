@@ -27,6 +27,13 @@
       "editor": "textfield",
       "example": "123456789%3AABCDEF123456789%3A12"
     },
+    "cookie": {
+      "title": "Full Cookie Header (Optional)",
+      "type": "string",
+      "description": "Optional full Cookie header string. If provided, it overrides sessionId-only cookie usage and improves success rate.",
+      "editor": "textarea",
+      "example": "sessionid=...; csrftoken=...; ds_user_id=...; ig_did=...;"
+    },
     "debugComments": {
       "title": "Debug Comments",
       "type": "boolean",

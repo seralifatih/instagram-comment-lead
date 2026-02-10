@@ -72,6 +72,12 @@ export function validateInput(raw: unknown): NormalizedInput {
   }
   const sessionId = rawSessionId.trim();
 
+  const cookie = resolveString(
+    obj['cookie'],
+    'cookie',
+    INPUT_DEFAULTS.cookie,
+  );
+
   const debugComments = resolveBool(
     obj['debugComments'],
     'debugComments',
@@ -103,6 +109,7 @@ export function validateInput(raw: unknown): NormalizedInput {
   return {
     postUrls,
     sessionId,
+    cookie,
     debugComments,
     maxCommentsPerPost,
     targetLeads,
@@ -173,4 +180,18 @@ function resolveBool(value: unknown, name: string, fallback: boolean): boolean {
   }
 
   return value;
+}
+
+/** Resolve an optional string: missing → default, wrong type → throw. */
+function resolveString(value: unknown, name: string, fallback: string): string {
+  if (value === undefined || value === null) return fallback;
+
+  if (typeof value !== 'string') {
+    throw new Error(
+      `INPUT_TYPE: "${name}" must be a string, received ${JSON.stringify(value)}.`,
+    );
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
 }
