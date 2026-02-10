@@ -316,7 +316,6 @@ async function processLeads(input: NormalizedInput): Promise<void> {
       proxyConfiguration,
       requestQueue,
       maxConcurrency: 4,
-      minDelayBetweenRequestsMillis: 1500,
       maxRequestsPerMinute: 20,
       maxRequestRetries: 5,
       retryOnBlocked: true,
@@ -334,7 +333,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
 
         const rawBody = typeof body === 'string' ? body : body?.toString() ?? '';
         const statusCode = response?.statusCode ?? null;
-        const location = response?.headers?.location ?? response?.headers?.Location;
+        const location = response?.headers?.location;
         const isLoginRedirect = typeof location === 'string' && location.includes('login');
         const blocked = statusCode === 403 || statusCode === 429 || (statusCode === 302 && isLoginRedirect);
         if (blocked) {
@@ -342,7 +341,7 @@ async function processLeads(input: NormalizedInput): Promise<void> {
             url: request.url,
             statusCode,
             location: location ?? null,
-            proxyIp: proxyInfo?.ip ?? null,
+            proxyUrl: proxyInfo?.url ?? null,
             responseHeaders: response?.headers ?? null,
           });
         }
@@ -556,9 +555,10 @@ function buildInstagramHeaders(sessionId: string): Record<string, string> {
     'gzip, deflate, br',
     'gzip, br',
   ];
-  const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
-  const lang = languages[Math.floor(Math.random() * languages.length)];
-  const enc = acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)];
+  const ua = userAgents[Math.floor(Math.random() * userAgents.length)] ?? userAgents[0];
+  const lang = languages[Math.floor(Math.random() * languages.length)] ?? languages[0];
+  const enc =
+    acceptEncodings[Math.floor(Math.random() * acceptEncodings.length)] ?? acceptEncodings[0];
   return {
     Cookie: `sessionid=${sessionId};`,
     'User-Agent': ua,
@@ -623,7 +623,7 @@ async function fetchGraphqlComments(params: {
       });
 
       const statusCode = response.statusCode;
-      const location = response.headers?.location ?? response.headers?.Location;
+      const location = response.headers?.location;
       const isLoginRedirect = typeof location === 'string' && location.includes('login');
       const blocked = statusCode === 403 || statusCode === 429 || (statusCode === 302 && isLoginRedirect);
       if (blocked) {
