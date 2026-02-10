@@ -1,8 +1,8 @@
 /**
- * SentimentScorer — lightweight keyword-based sentiment analysis.
+ * SentimentScorer  lightweight keyword-based sentiment analysis.
  *
  * Returns a sentiment label (positive / negative / neutral) plus a
- * confidence value (0–1) and the matched signal words so callers can
+ * confidence value (01) and the matched signal words so callers can
  * surface them in the UI without re-running analysis.
  *
  * Design rationale: no external ML dependency, works offline inside
@@ -15,7 +15,7 @@ export type SentimentResult = {
     /** Dominant sentiment bucket. */
     sentiment: SentimentLabel;
     /**
-     * Confidence in the dominant label, 0–1.
+     * Confidence in the dominant label, 01.
      * 0.5 means equal positive/negative signals (still labelled neutral).
      */
     sentiment_score: number;
@@ -29,7 +29,7 @@ export type SentimentResult = {
     negative_signals: string[];
 };
 
-// ── signal dictionaries ───────────────────────────────────────────────────
+//  signal dictionaries
 // Weights reflect purchase-intent context (e.g. "love" matters more than
 // "ok").  Turkish ASCII variants are included to match the existing
 // dictionaries.ts pattern.
@@ -45,7 +45,7 @@ const POSITIVE_SIGNALS: Readonly<Record<string, number>> = {
     good: 5, nice: 5, cool: 5, like: 5, liked: 5, wonderful: 7,
     brilliant: 7, superb: 7, solid: 6, helpful: 6, useful: 6,
     // Turkish positive
-    mukemmel: 10, harika: 9, guzel: 8, super: 8, cok iyi: 9,
+    mukemmel: 10, harika: 9, guzel: 8, super: 8, 'cok iyi': 9,
     seviyorum: 10, sevdim: 8, begendim: 8, kaliteli: 9,
 };
 
@@ -65,7 +65,7 @@ const NEGATIVE_SIGNALS: Readonly<Record<string, number>> = {
     hayal: 7, aldatici: 9, yaniltici: 9,
 };
 
-// ── public API ────────────────────────────────────────────────────────────
+//  public API
 
 /**
  * Score the sentiment of a single comment text.
@@ -116,13 +116,13 @@ export function scoreSentiment(text: string): SentimentResult {
 
     if (positiveRatio > 0.6) {
         sentiment = 'positive';
-        // Scale confidence: ratio 0.6 → score 0.6; ratio 1.0 → score 1.0
+        // Scale confidence: ratio 0.6  score 0.6; ratio 1.0  score 1.0
         sentiment_score = Math.min(1, 0.3 + positiveRatio * 0.7);
     } else if (negativeRatio > 0.6) {
         sentiment = 'negative';
         sentiment_score = Math.min(1, 0.3 + negativeRatio * 0.7);
     } else {
-        // Mixed signals → neutral with moderate confidence
+        // Mixed signals  neutral with moderate confidence
         sentiment = 'neutral';
         sentiment_score = 0.5;
     }
