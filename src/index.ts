@@ -89,7 +89,12 @@ emit('INFO', 'Boot', {
 
 // ── main ─────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
+async function main(): Promise<{
+  postsProcessed: number;
+  totalComments: number;
+  totalLeads: number;
+  leads: Array<{ url: string; username: string; text: string; score: number }>;
+}> {
   // 1. Load raw input
   const raw: unknown = await Actor.getInput();
 
@@ -870,7 +875,7 @@ function parseInstagramJson(
 
 Actor.main(async () => {
   try {
-    await main();
+    return (await main()) as unknown as void;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     log.error('Actor failed', { error: msg, buildVersion: BUILD_VERSION });
