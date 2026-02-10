@@ -199,8 +199,8 @@ async function processLeads(input: NormalizedInput): Promise<{
   const queuedUrls: string[] = [];
   const perPostMeta: Array<Record<string, unknown>> = [];
   const allComments: Array<{ url: string; username: string; text: string }> = [];
-  const allLeads: Lead[] = [];
-  const leadDedup = new Set<string>();
+  const leadByUsername = new Map<string, Lead>();
+  const leadKeywordsByUsername = new Map<string, Set<string>>();
 
   // Collect ALL scored records (not just qualifying leads) for analytics
   const allScoredRecords: LeadRecord[] = [];
@@ -394,8 +394,8 @@ async function processLeads(input: NormalizedInput): Promise<{
             sentiment_score: sentimentResult.sentiment_score,
           });
 
-          const leadKey = `${comment.username}::${comment.text}`;
-          if (scored.score >= input.minLeadScore && !qualifiedDedup.has(leadKey)) {
+          const leadKey = comment.username;
+          if (scored.score >= input.minLeadScore && leadKey && !qualifiedDedup.has(leadKey)) {
             qualifiedDedup.add(leadKey);
             qualifiedLeadRecords.push({
               url: sourceUrl,
@@ -410,10 +410,7 @@ async function processLeads(input: NormalizedInput): Promise<{
           }
 
           if (scored.score < input.minLeadScore) continue;
-
-          if (leadDedup.has(leadKey)) continue;
-          leadDedup.add(leadKey);
-          totalLeads += 1;
+          if (!comment.username) continue;
 
           const lead: Lead = buildLead({
             username: comment.username,
@@ -423,8 +420,38 @@ async function processLeads(input: NormalizedInput): Promise<{
             minLeadScore: input.minLeadScore,
           });
 
-          leadsPushed += 1;
-          allLeads.push(lead);
+          const existingLead = leadByUsername.get(lead.username);
+          const keywordSet =
+            leadKeywordsByUsername.get(lead.username) ?? new Set<string>();
+          for (const kw of lead.extracted_keywords) keywordSet.add(kw);
+          leadKeywordsByUsername.set(lead.username, keywordSet);
+
+          if (!existingLead) {
+            leadByUsername.set(lead.username, {
+              ...lead,
+              extracted_keywords: Array.from(keywordSet),
+            });
+            totalLeads = leadByUsername.size;
+            leadsPushed += 1;
+          } else {
+            const merged: Lead = {
+              ...existingLead,
+              buyer_intent_score: Math.max(
+                existingLead.buyer_intent_score,
+                lead.buyer_intent_score,
+              ),
+              engagement_score: Math.max(
+                existingLead.engagement_score,
+                lead.engagement_score,
+              ),
+              likely_customer:
+                existingLead.likely_customer || lead.likely_customer,
+              niche: existingLead.niche ?? lead.niche,
+              geo: existingLead.geo ?? lead.geo,
+              extracted_keywords: Array.from(keywordSet).slice(0, 10),
+            };
+            leadByUsername.set(lead.username, merged);
+          }
 
           if (totalLeads >= input.targetLeads) {
             targetReached = true;
@@ -465,11 +492,6 @@ async function processLeads(input: NormalizedInput): Promise<{
 
     await crawler.run();
 
-    if (input.debugComments) {
-      await Actor.pushData(allComments);
-    }
-    await Actor.pushData(allLeads);
-
     log.info('Lead generation complete', {
       queuedUrls: queuedUrls.length,
       totalComments,
@@ -485,7 +507,7 @@ async function processLeads(input: NormalizedInput): Promise<{
       totalComments,
       totalLeads,
       comments: input.debugComments ? allComments : [],
-      leads: allLeads,
+      leads: Array.from(leadByUsername.values()),
     };
   } catch (err: unknown) {
     status = 'failed';
